@@ -2,25 +2,24 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>Tactical Shooter JS</title>
+    <title>3rd Person Tactical</title>
     <style>
-        body { margin: 0; overflow: hidden; background: #222; font-family: sans-serif; }
-        canvas { display: block; background: #333; }
-        #ui { position: absolute; top: 20px; left: 20px; color: white; pointer-events: none; }
+        body { margin: 0; overflow: hidden; background: #1a1a1a; font-family: sans-serif; }
+        canvas { display: block; }
+        #ui { position: absolute; top: 20px; left: 20px; color: white; pointer-events: none; text-shadow: 2px 2px 4px #000; }
     </style>
 </head>
 <body>
     <div id="ui">
-        <h1>Tactical Strike</h1>
-        <p>移動: WASD | 射撃: クリック</p>
-        <p id="score">Score: 0</p>
+        <h1>TPS MODE ACTIVE</h1>
+        <p>移動: WASD | 照準: マウス移動 | 射撃: 左クリック</p>
+        <p id="score">Kills: 0</p>
     </div>
     <canvas id="gameCanvas"></canvas>
 
 <script>
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
-const scoreEl = document.getElementById('score');
 
 canvas.width = window.innerWidth;
 canvas.height = window.innerHeight;
@@ -30,160 +29,148 @@ let keys = {};
 let bullets = [];
 let enemies = [];
 let walls = [
-    {x: 300, y: 200, w: 60, h: 300},
-    {x: 600, y: 100, w: 300, h: 60},
-    {x: 800, y: 400, w: 60, h: 200}
+    {x: 500, y: 500, w: 200, h: 200},
+    {x: -200, y: 800, w: 1000, h: 50},
+    {x: 1200, y: 200, w: 50, h: 800}
 ];
 
 const player = {
     x: 100, y: 100,
-    size: 20,
-    speed: 3.5,
-    angle: 0
+    angle: 0,
+    speed: 4,
+    walkCycle: 0
 };
 
-// 入力検知
 window.addEventListener('keydown', e => keys[e.code] = true);
 window.addEventListener('keyup', e => keys[e.code] = false);
-window.addEventListener('mousedown', shoot);
-
-function shoot() {
-    const angle = Math.atan2(mouseY - player.y, mouseX - player.x);
-    bullets.push({ x: player.x, y: player.y, angle: angle, speed: 12 });
-}
-
-let mouseX = 0, mouseY = 0;
-window.addEventListener('mousemove', e => {
-    mouseX = e.clientX;
-    mouseY = e.clientY;
+window.addEventListener('mousedown', () => {
+    // プレイヤーの向き（常に画面上方向＝0度とするTPS視点）に弾を放つ
+    bullets.push({
+        x: player.x,
+        y: player.y,
+        angle: player.angle,
+        speed: 15
+    });
 });
 
-// 当たり判定（壁）
-function checkWallCollision(x, y, size) {
+let mouseX = 0;
+window.addEventListener('mousemove', e => {
+    // マウスの左右移動で視界（プレイヤーの角度）を回転させる
+    let diff = e.clientX - (canvas.width / 2);
+    player.angle += diff * 0.005;
+});
+
+function isHitWall(x, y) {
     for (let w of walls) {
-        if (x + size > w.x && x - size < w.x + w.w &&
-            y + size > w.y && y - size < w.y + w.h) {
-            return true;
-        }
+        if (x > w.x && x < w.x + w.w && y > w.y && y < w.y + w.h) return true;
     }
     return false;
 }
 
-function spawnEnemy() {
-    if (enemies.length < 5) {
-        enemies.push({
-            x: Math.random() * canvas.width,
-            y: Math.random() * canvas.height,
-            size: 20,
-            hp: 1
-        });
-    }
-}
-setInterval(spawnEnemy, 2000);
-
 function update() {
-    // プレイヤー移動
-    let nextX = player.x;
-    let nextY = player.y;
-    if (keys['KeyW']) nextY -= player.speed;
-    if (keys['KeyS']) nextY += player.speed;
-    if (keys['KeyA']) nextX -= player.speed;
-    if (keys['KeyD']) nextX += player.speed;
+    let moveX = 0;
+    let moveY = 0;
 
-    if (!checkWallCollision(nextX, player.y, player.size)) player.x = nextX;
-    if (!checkWallCollision(player.x, nextY, player.size)) player.y = nextY;
+    // 三人称視点での移動：向いている方向を基準にWASD
+    if (keys['KeyW']) { moveX += Math.cos(player.angle); moveY += Math.sin(player.angle); }
+    if (keys['KeyS']) { moveX -= Math.cos(player.angle); moveY -= Math.sin(player.angle); }
+    if (keys['KeyA']) { moveX += Math.sin(player.angle); moveY -= Math.cos(player.angle); }
+    if (keys['KeyD']) { moveX -= Math.sin(player.angle); moveY += Math.cos(player.angle); }
 
-    player.angle = Math.atan2(mouseY - player.y, mouseX - player.x);
+    let nextX = player.x + moveX * player.speed;
+    let nextY = player.y + moveY * player.speed;
 
-    // 弾の移動
-    for (let i = bullets.length - 1; i >= 0; i--) {
-        let b = bullets[i];
+    if (!isHitWall(nextX, player.y)) player.x = nextX;
+    if (!isHitWall(player.x, nextY)) player.y = nextY;
+
+    if (moveX !== 0 || moveY !== 0) player.walkCycle += 0.15;
+
+    // 敵AIと弾の更新
+    bullets.forEach((b, i) => {
         b.x += Math.cos(b.angle) * b.speed;
         b.y += Math.sin(b.angle) * b.speed;
+        if (isHitWall(b.x, b.y)) bullets.splice(i, 1);
+    });
 
-        if (checkWallCollision(b.x, b.y, 2)) {
-            bullets.splice(i, 1);
-            continue;
-        }
-
-        // 敵との当たり判定
-        for (let j = enemies.length - 1; j >= 0; j--) {
-            let e = enemies[j];
-            let dist = Math.hypot(e.x - b.x, e.y - b.y);
-            if (dist < e.size) {
-                enemies.splice(j, 1);
-                bullets.splice(i, 1);
-                score += 100;
-                scoreEl.innerText = `Score: ${score}`;
-                break;
-            }
-        }
-    }
-
-    // 敵AIの移動
-    for (let e of enemies) {
-        let angle = Math.atan2(player.y - e.y, player.x - e.x);
-        let vx = Math.cos(angle) * 1.5;
-        let vy = Math.sin(angle) * 1.5;
-        if (!checkWallCollision(e.x + vx, e.y + vy, e.size)) {
-            e.x += vx;
-            e.y += vy;
-        }
-    }
+    if (frameCount % 100 === 0) enemies.push({x: player.x + Math.random()*800-400, y: player.y - 600});
 }
 
-function drawHuman(x, y, angle, color) {
+let frameCount = 0;
+function draw() {
+    frameCount++;
+    update();
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    // --- カメラ制御 ---
+    // プレイヤーが常に中心に来るように、世界全体を逆方向に動かして回転させる
+    ctx.save();
+    ctx.translate(canvas.width / 2, canvas.height * 0.7); // プレイヤーを画面下寄りに配置
+    ctx.rotate(-player.angle - Math.PI/2); // プレイヤーの向きを常に「上」にする
+    ctx.translate(-player.x, -player.y);
+
+    // 地面のグリッド（移動感が出る）
+    ctx.strokeStyle = '#334433';
+    for(let i=-2000; i<2000; i+=100){
+        ctx.beginPath(); ctx.moveTo(i, -2000); ctx.lineTo(i, 2000); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(-2000, i); ctx.lineTo(2000, i); ctx.stroke();
+    }
+
+    // 壁の描画
+    ctx.fillStyle = '#444';
+    walls.forEach(w => ctx.fillRect(w.x, w.y, w.w, w.h));
+
+    // 敵の描画
+    enemies.forEach(e => {
+        drawHuman(e.x, e.y, Math.atan2(player.y-e.y, player.x-e.x), '#822', 0);
+    });
+
+    // 弾の描画
+    ctx.fillStyle = '#ff0';
+    bullets.forEach(b => { ctx.beginPath(); ctx.arc(b.x, b.y, 3, 0, Math.PI*2); ctx.fill(); });
+
+    ctx.restore();
+
+    // --- プレイヤー（自分）の固定描画 ---
+    // カメラを回転させても自分は常に同じ位置に表示
+    drawHuman(canvas.width / 2, canvas.height * 0.7, Math.PI/2, '#25f', player.walkCycle);
+    
+    // 照準（レティクル）
+    ctx.strokeStyle = 'lime';
+    ctx.strokeRect(canvas.width/2 - 10, canvas.height/2 - 10, 20, 20);
+
+    requestAnimationFrame(draw);
+}
+
+function drawHuman(x, y, angle, color, walk) {
     ctx.save();
     ctx.translate(x, y);
     ctx.rotate(angle);
 
-    // 肩・体
+    let sway = Math.sin(walk) * 5; // 歩行時の揺れ
+
+    // 体・肩
     ctx.fillStyle = color;
     ctx.beginPath();
-    ctx.ellipse(0, 0, 15, 22, 0, 0, Math.PI * 2);
+    ctx.ellipse(0, 0, 18, 25, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    // 頭（肌色）
+    // 腕（銃を構える）
+    ctx.fillStyle = color;
+    ctx.fillRect(10, -15 + sway, 20, 8);
+    ctx.fillRect(10, 7 - sway, 20, 8);
+
+    // 頭
     ctx.fillStyle = '#ffdbac';
     ctx.beginPath();
-    ctx.arc(5, 0, 8, 0, Math.PI * 2);
+    ctx.arc(5, 0, 10, 0, Math.PI * 2);
     ctx.fill();
 
-    // 銃
-    ctx.fillStyle = '#333';
-    ctx.fillRect(10, 5, 15, 5);
-    
+    // 銃（ライフル）
+    ctx.fillStyle = '#111';
+    ctx.fillRect(20, -2, 25, 5);
+
     ctx.restore();
-}
-
-function draw() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    // 壁
-    ctx.fillStyle = '#555';
-    for (let w of walls) ctx.fillRect(w.x, w.y, w.w, w.h);
-
-    // 弾
-    ctx.fillStyle = '#ff0';
-    for (let b of bullets) {
-        ctx.beginPath();
-        ctx.arc(b.x, b.y, 3, 0, Math.PI * 2);
-        ctx.fill();
-    }
-
-    // 敵
-    for (let e of enemies) {
-        let angle = Math.atan2(player.y - e.y, player.x - e.x);
-        drawHuman(e.x, e.y, angle, '#800');
-    }
-
-    // プレイヤー
-    drawHuman(player.x, player.y, player.angle, '#0055ff');
-
-    requestAnimationFrame(() => {
-        update();
-        draw();
-    });
 }
 
 draw();

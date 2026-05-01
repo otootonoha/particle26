@@ -1,134 +1,192 @@
-using UnityEngine;
-using UnityEngine.AI;
-using System.Collections.Generic;
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>Tactical Shooter JS</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #222; font-family: sans-serif; }
+        canvas { display: block; background: #333; }
+        #ui { position: absolute; top: 20px; left: 20px; color: white; pointer-events: none; }
+    </style>
+</head>
+<body>
+    <div id="ui">
+        <h1>Tactical Strike</h1>
+        <p>移動: WASD | 射撃: クリック</p>
+        <p id="score">Score: 0</p>
+    </div>
+    <canvas id="gameCanvas"></canvas>
 
-// この1つのファイルに全ての機能をまとめました
-public class ShootingGameManager : MonoBehaviour
-{
-    [Header("--- Player Settings ---")]
-    public float moveSpeed = 5f;
-    public float mouseSensitivity = 2f;
-    public Camera playerCamera;
-    private CharacterController controller;
-    private float xRotation = 0f;
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const scoreEl = document.getElementById('score');
 
-    [Header("--- Weapon System ---")]
-    public GameObject[] weapons; // 武器のモデルを配列で入れる
-    private int currentWeaponIndex = 0;
-    public float damage = 10f;
-    public float range = 100f;
-    public ParticleSystem muzzleFlash;
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
 
-    [Header("--- Enemy Settings (Assign to Enemy Prefab) ---")]
-    public bool isEnemy = false; // 敵の場合はここをTrueにする
-    public float health = 50f;
-    public Transform playerTransform;
-    private NavMeshAgent agent;
+let score = 0;
+let keys = {};
+let bullets = [];
+let enemies = [];
+let walls = [
+    {x: 300, y: 200, w: 60, h: 300},
+    {x: 600, y: 100, w: 300, h: 60},
+    {x: 800, y: 400, w: 60, h: 200}
+];
 
-    void Start()
-    {
-        if (!isEnemy) // プレイヤーの初期設定
-        {
-            controller = GetComponent<CharacterController>();
-            Cursor.lockState = CursorLockMode.Locked; // マウスを画面中央に固定
-            UpdateWeaponSelection();
-        }
-        else // 敵の初期設定
-        {
-            agent = GetComponent<NavMeshAgent>();
-        }
-    }
+const player = {
+    x: 100, y: 100,
+    size: 20,
+    speed: 3.5,
+    angle: 0
+};
 
-    void Update()
-    {
-        if (!isEnemy)
-        {
-            HandleMovement();
-            HandleLook();
-            HandleWeaponSwitch();
-            if (Input.GetButtonDown("Fire1")) Shoot();
-        }
-        else
-        {
-            HandleEnemyAI();
-        }
-    }
+// 入力検知
+window.addEventListener('keydown', e => keys[e.code] = true);
+window.addEventListener('keyup', e => keys[e.code] = false);
+window.addEventListener('mousedown', shoot);
 
-    // --- プレイヤー移動 ---
-    void HandleMovement()
-    {
-        float x = Input.GetAxis("Horizontal");
-        float z = Input.GetAxis("Vertical");
-        Vector3 move = transform.right * x + transform.forward * z;
-        controller.Move(move * moveSpeed * Time.deltaTime);
-    }
+function shoot() {
+    const angle = Math.atan2(mouseY - player.y, mouseX - player.x);
+    bullets.push({ x: player.x, y: player.y, angle: angle, speed: 12 });
+}
 
-    // --- 視点操作 ---
-    void HandleLook()
-    {
-        float mouseX = Input.GetAxis("Mouse X") * mouseSensitivity;
-        float mouseY = Input.GetAxis("Mouse Y") * mouseSensitivity;
+let mouseX = 0, mouseY = 0;
+window.addEventListener('mousemove', e => {
+    mouseX = e.clientX;
+    mouseY = e.clientY;
+});
 
-        xRotation -= mouseY;
-        xRotation = Mathf.Clamp(xRotation, -90f, 90f);
-
-        playerCamera.transform.localRotation = Quaternion.Euler(xRotation, 0f, 0f);
-        transform.Rotate(Vector3.up * mouseX);
-    }
-
-    // --- 武器切り替え ---
-    void HandleWeaponSwitch()
-    {
-        if (Input.GetKeyDown(KeyCode.Q) || Input.GetAxis("Mouse ScrollWheel") != 0)
-        {
-            currentWeaponIndex = (currentWeaponIndex + 1) % weapons.Length;
-            UpdateWeaponSelection();
+// 当たり判定（壁）
+function checkWallCollision(x, y, size) {
+    for (let w of walls) {
+        if (x + size > w.x && x - size < w.x + w.w &&
+            y + size > w.y && y - size < w.y + w.h) {
+            return true;
         }
     }
+    return false;
+}
 
-    void UpdateWeaponSelection()
-    {
-        for (int i = 0; i < weapons.Length; i++)
-        {
-            weapons[i].SetActive(i == currentWeaponIndex);
-        }
+function spawnEnemy() {
+    if (enemies.length < 5) {
+        enemies.push({
+            x: Math.random() * canvas.width,
+            y: Math.random() * canvas.height,
+            size: 20,
+            hp: 1
+        });
     }
+}
+setInterval(spawnEnemy, 2000);
 
-    // --- 射撃 ---
-    void Shoot()
-    {
-        if (muzzleFlash != null) muzzleFlash.Play();
+function update() {
+    // プレイヤー移動
+    let nextX = player.x;
+    let nextY = player.y;
+    if (keys['KeyW']) nextY -= player.speed;
+    if (keys['KeyS']) nextY += player.speed;
+    if (keys['KeyA']) nextX -= player.speed;
+    if (keys['KeyD']) nextX += player.speed;
 
-        RaycastHit hit;
-        if (Physics.Raycast(playerCamera.transform.position, playerCamera.transform.forward, out hit, range))
-        {
-            Debug.Log("Hit: " + hit.transform.name);
-            ShootingGameManager target = hit.transform.GetComponent<ShootingGameManager>();
-            if (target != null && target.isEnemy)
-            {
-                target.TakeDamage(damage);
+    if (!checkWallCollision(nextX, player.y, player.size)) player.x = nextX;
+    if (!checkWallCollision(player.x, nextY, player.size)) player.y = nextY;
+
+    player.angle = Math.atan2(mouseY - player.y, mouseX - player.x);
+
+    // 弾の移動
+    for (let i = bullets.length - 1; i >= 0; i--) {
+        let b = bullets[i];
+        b.x += Math.cos(b.angle) * b.speed;
+        b.y += Math.sin(b.angle) * b.speed;
+
+        if (checkWallCollision(b.x, b.y, 2)) {
+            bullets.splice(i, 1);
+            continue;
+        }
+
+        // 敵との当たり判定
+        for (let j = enemies.length - 1; j >= 0; j--) {
+            let e = enemies[j];
+            let dist = Math.hypot(e.x - b.x, e.y - b.y);
+            if (dist < e.size) {
+                enemies.splice(j, 1);
+                bullets.splice(i, 1);
+                score += 100;
+                scoreEl.innerText = `Score: ${score}`;
+                break;
             }
         }
     }
 
-    // --- 敵AIロジック ---
-    void HandleEnemyAI()
-    {
-        if (playerTransform != null)
-        {
-            agent.SetDestination(playerTransform.position);
+    // 敵AIの移動
+    for (let e of enemies) {
+        let angle = Math.atan2(player.y - e.y, player.x - e.x);
+        let vx = Math.cos(angle) * 1.5;
+        let vy = Math.sin(angle) * 1.5;
+        if (!checkWallCollision(e.x + vx, e.y + vy, e.size)) {
+            e.x += vx;
+            e.y += vy;
         }
     }
-
-    // --- ダメージ処理 ---
-    public void TakeDamage(float amount)
-    {
-        health -= amount;
-        if (health <= 0f) Die();
-    }
-
-    void Die()
-    {
-        if (isEnemy) Destroy(gameObject);
-    }
 }
+
+function drawHuman(x, y, angle, color) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(angle);
+
+    // 肩・体
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 15, 22, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 頭（肌色）
+    ctx.fillStyle = '#ffdbac';
+    ctx.beginPath();
+    ctx.arc(5, 0, 8, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 銃
+    ctx.fillStyle = '#333';
+    ctx.fillRect(10, 5, 15, 5);
+    
+    ctx.restore();
+}
+
+function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // 壁
+    ctx.fillStyle = '#555';
+    for (let w of walls) ctx.fillRect(w.x, w.y, w.w, w.h);
+
+    // 弾
+    ctx.fillStyle = '#ff0';
+    for (let b of bullets) {
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, 3, 0, Math.PI * 2);
+        ctx.fill();
+    }
+
+    // 敵
+    for (let e of enemies) {
+        let angle = Math.atan2(player.y - e.y, player.x - e.x);
+        drawHuman(e.x, e.y, angle, '#800');
+    }
+
+    // プレイヤー
+    drawHuman(player.x, player.y, player.angle, '#0055ff');
+
+    requestAnimationFrame(() => {
+        update();
+        draw();
+    });
+}
+
+draw();
+</script>
+</body>
+</html>

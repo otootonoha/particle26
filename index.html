@@ -1,160 +1,134 @@
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-    <meta charset="UTF-8">
-    <title>プーさんの風船割りゲーム</title>
-    <style>
-        body { margin: 0; overflow: hidden; background-color: #87CEEB; font-family: 'Arial', sans-serif; }
-        canvas { display: block; cursor: crosshair; }
-        #ui { position: absolute; top: 10px; left: 10px; pointer-events: none; }
-        .score { font-size: 32px; color: white; text-shadow: 2px 2px 4px rgba(0,0,0,0.5); font-weight: bold; }
-    </style>
-</head>
-<body>
+using UnityEngine;
+using UnityEngine.AI;
+using System.Collections.Generic;
 
-<div id="ui">
-    <div class="score">スコア: <span id="scoreVal">0</span></div>
-</div>
-<canvas id="gameCanvas"></canvas>
+// この1つのファイルに全ての機能をまとめました
+public class ShootingGameManager : MonoBehaviour
+{
+    [Header("--- Player Settings ---")]
+    public float moveSpeed = 5f;
+    public float mouseSensitivity = 2f;
+    public Camera playerCamera;
+    private CharacterController controller;
+    private float xRotation = 0f;
 
-<script>
-const canvas = document.getElementById('gameCanvas');
-const ctx = canvas.getContext('2d');
-const scoreElement = document.getElementById('scoreVal');
+    [Header("--- Weapon System ---")]
+    public GameObject[] weapons; // 武器のモデルを配列で入れる
+    private int currentWeaponIndex = 0;
+    public float damage = 10f;
+    public float range = 100f;
+    public ParticleSystem muzzleFlash;
 
-canvas.width = window.innerWidth;
-canvas.height = window.innerHeight;
+    [Header("--- Enemy Settings (Assign to Enemy Prefab) ---")]
+    public bool isEnemy = false; // 敵の場合はここをTrueにする
+    public float health = 50f;
+    public Transform playerTransform;
+    private NavMeshAgent agent;
 
-let score = 0;
-let poohs = [];
-
-class Pooh {
-    constructor() {
-        this.init();
-    }
-
-    init() {
-        this.radius = 35; // 風船の大きさ
-        this.x = Math.random() * (canvas.width - 100) + 50;
-        // 画面のすぐ下から出現するように調整
-        this.y = canvas.height + 50; 
-        this.speed = 1.5 + Math.random() * 2.5; // 少しゆっくりめに
-        this.color = Math.random() > 0.5 ? '#FF4500' : '#FF69B4'; // 赤かピンクの風船
-        this.isPopped = false;
-        this.fallSpeed = 0;
-        this.angle = 0; // 揺れ用
-    }
-
-    draw() {
-        ctx.save();
-        
-        // ぷかぷか揺れる動き
-        if (!this.isPopped) {
-            this.angle += 0.02;
-            ctx.translate(Math.sin(this.angle) * 20, 0);
+    void Start()
+    {
+        if (!isEnemy) // プレイヤーの初期設定
+        {
+            controller = GetComponent<CharacterController>();
+            Cursor.lockState = CursorLockMode.Locked; // マウスを画面中央に固定
+            UpdateWeaponSelection();
         }
-
-        // 1. 風船の紐
-        if (!this.isPopped) {
-            ctx.beginPath();
-            ctx.moveTo(this.x, this.y);
-            ctx.lineTo(this.x, this.y + 60);
-            ctx.strokeStyle = "#FFF";
-            ctx.lineWidth = 2;
-            ctx.stroke();
-
-            // 2. 風船本体
-            ctx.beginPath();
-            ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
-            ctx.fillStyle = this.color;
-            ctx.fill();
-            // 風船の光沢
-            ctx.beginPath();
-            ctx.arc(this.x - 10, this.y - 10, 8, 0, Math.PI * 2);
-            ctx.fillStyle = "rgba(255,255,255,0.3)";
-            ctx.fill();
-        }
-
-        // 3. プーさん本体（紐の下に描画）
-        const py = this.y + 65;
-        // 体
-        ctx.fillStyle = "#FFD700"; 
-        ctx.beginPath();
-        ctx.ellipse(this.x, py + 20, 18, 22, 0, 0, Math.PI * 2);
-        ctx.fill();
-        // 顔
-        ctx.beginPath();
-        ctx.arc(this.x, py, 15, 0, Math.PI * 2);
-        ctx.fill();
-        // 耳
-        ctx.arc(this.x - 12, py - 12, 5, 0, Math.PI * 2);
-        ctx.arc(this.x + 12, py - 12, 5, 0, Math.PI * 2);
-        ctx.fill();
-        // 赤いシャツ
-        ctx.fillStyle = "#EE0000";
-        ctx.fillRect(this.x - 16, py + 5, 32, 12);
-
-        ctx.restore();
-    }
-
-    update() {
-        if (!this.isPopped) {
-            this.y -= this.speed;
-            // 画面の上に行き過ぎたらリセット
-            if (this.y < -150) this.init();
-        } else {
-            this.y += this.fallSpeed;
-            this.fallSpeed += 0.4;
-            if (this.y > canvas.height + 200) this.init();
+        else // 敵の初期設定
+        {
+            agent = GetComponent<NavMeshAgent>();
         }
     }
-}
 
-// 5人登場させる
-for (let i = 0; i < 5; i++) {
-    const p = new Pooh();
-    // 最初からバラバラの位置に配置
-    p.y = canvas.height + (i * 150); 
-    poohs.push(p);
-}
+    void Update()
+    {
+        if (!isEnemy)
+        {
+            HandleMovement();
+            HandleLook();
+            HandleWeaponSwitch();
+            if (Input.GetButtonDown("Fire1")) Shoot();
+        }
+        else
+        {
+            HandleEnemyAI();
+        }
+    }
 
-function animate() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    
-    poohs.forEach(p => {
-        p.update();
-        p.draw();
-    });
+    // --- プレイヤー移動 ---
+    void HandleMovement()
+    {
+        float x = Input.GetAxis("Horizontal");
+        float z = Input.GetAxis("Vertical");
+        Vector3 move = transform.right * x + transform.forward * z;
+        controller.Move(move * moveSpeed * Time.deltaTime);
+    }
 
-    requestAnimationFrame(animate);
-}
+    // --- 視点操作 ---
+    void HandleLook()
+    {
+        float mouseX = Input.GetAxis("Mouse X") * mouseSensitivity;
+        float mouseY = Input.GetAxis("Mouse Y") * mouseSensitivity;
 
-canvas.addEventListener('mousedown', (e) => {
-    const rect = canvas.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left;
-    const mouseY = e.clientY - rect.top;
+        xRotation -= mouseY;
+        xRotation = Mathf.Clamp(xRotation, -90f, 90f);
 
-    poohs.forEach(p => {
-        if (!p.isPopped) {
-            // 風船の揺れを考慮して少し当たり判定を広めに
-            const dist = Math.sqrt((mouseX - p.x) ** 2 + (mouseY - p.y) ** 2);
-            if (dist < p.radius + 10) {
-                p.isPopped = true;
-                p.fallSpeed = 1;
-                score += 10;
-                scoreElement.innerText = score;
+        playerCamera.transform.localRotation = Quaternion.Euler(xRotation, 0f, 0f);
+        transform.Rotate(Vector3.up * mouseX);
+    }
+
+    // --- 武器切り替え ---
+    void HandleWeaponSwitch()
+    {
+        if (Input.GetKeyDown(KeyCode.Q) || Input.GetAxis("Mouse ScrollWheel") != 0)
+        {
+            currentWeaponIndex = (currentWeaponIndex + 1) % weapons.Length;
+            UpdateWeaponSelection();
+        }
+    }
+
+    void UpdateWeaponSelection()
+    {
+        for (int i = 0; i < weapons.Length; i++)
+        {
+            weapons[i].SetActive(i == currentWeaponIndex);
+        }
+    }
+
+    // --- 射撃 ---
+    void Shoot()
+    {
+        if (muzzleFlash != null) muzzleFlash.Play();
+
+        RaycastHit hit;
+        if (Physics.Raycast(playerCamera.transform.position, playerCamera.transform.forward, out hit, range))
+        {
+            Debug.Log("Hit: " + hit.transform.name);
+            ShootingGameManager target = hit.transform.GetComponent<ShootingGameManager>();
+            if (target != null && target.isEnemy)
+            {
+                target.TakeDamage(damage);
             }
         }
-    });
-});
+    }
 
-animate();
+    // --- 敵AIロジック ---
+    void HandleEnemyAI()
+    {
+        if (playerTransform != null)
+        {
+            agent.SetDestination(playerTransform.position);
+        }
+    }
 
-window.addEventListener('resize', () => {
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
-});
-</script>
+    // --- ダメージ処理 ---
+    public void TakeDamage(float amount)
+    {
+        health -= amount;
+        if (health <= 0f) Die();
+    }
 
-</body>
-</html>
+    void Die()
+    {
+        if (isEnemy) Destroy(gameObject);
+    }
+}

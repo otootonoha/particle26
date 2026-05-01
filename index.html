@@ -2,24 +2,29 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>3rd Person Shooter - Fixed Controls</title>
+    <title>Top-Down Survivor - Wave System</title>
     <style>
-        body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; }
+        body { margin: 0; overflow: hidden; background: #050805; font-family: 'Consolas', monospace; }
         canvas { display: block; }
-        #ui { position: absolute; top: 20px; left: 20px; color: #0f0; pointer-events: none; z-index: 10; }
-        #hp-bar { width: 200px; height: 10px; border: 2px solid #0f0; background: #222; }
-        #hp-inner { width: 100%; height: 100%; background: #f00; }
-        #crosshair { position: absolute; top: 50%; left: 50%; width: 20px; height: 20px; border: 2px solid #0f0; border-radius: 50%; transform: translate(-50%, -50%); pointer-events: none; opacity: 0.7; }
+        #ui { position: absolute; top: 20px; left: 20px; color: #0f0; pointer-events: none; text-shadow: 2px 2px #000; }
+        #hp-bar { width: 200px; height: 12px; border: 2px solid #0f0; background: #222; margin: 5px 0; }
+        #hp-inner { width: 100%; height: 100%; background: #f00; transition: 0.1s; }
+        #wave-info { position: absolute; top: 20px; right: 20px; text-align: right; color: #ff0; pointer-events: none; }
+        .big-text { font-size: 1.5em; font-weight: bold; }
     </style>
 </head>
 <body>
 
     <div id="ui">
-        <h3>TPS MODE ACTIVE</h3>
+        <h2 style="margin:0">BATTLE OVERVIEW</h2>
         <div id="hp-bar"><div id="hp-inner"></div></div>
-        <p id="score">KILLS: 0</p>
+        <p id="score">TOTAL KILLS: 0</p>
     </div>
-    <div id="crosshair"></div>
+
+    <div id="wave-info">
+        <div id="level-display" class="big-text">WAVE 1</div>
+        <div id="remaining-display">REMAINING: 5</div>
+    </div>
 
     <canvas id="gameCanvas"></canvas>
 
@@ -34,9 +39,7 @@ function resize() {
 window.addEventListener('resize', resize);
 resize();
 
-// --- ゲーム設定 ---
-const SENSITIVITY = 0.003;
-const FOV = 1.0;
+// --- ゲーム状態 ---
 let score = 0;
 let playerHP = 100;
 let keys = {};
@@ -45,138 +48,166 @@ let enemyBullets = [];
 let enemies = [];
 let damageTexts = [];
 
-const player = { x: 0, y: 0, angle: 0, speed: 8, radius: 25 };
+// ウェーブ管理
+let currentWave = 1;
+let enemiesToSpawn = 5; // このウェーブで出す総数
+let enemiesKilledInWave = 0;
+let waveClearTimer = 0;
 
-// キー入力の状態を確実に保持
+const player = { x: 0, y: 0, speed: 6, radius: 20 };
+let mousePos = { x: 0, y: 0 };
+
 window.addEventListener('keydown', e => keys[e.code] = true);
 window.addEventListener('keyup', e => keys[e.code] = false);
-
-// マウス移動で視点回転
-canvas.addEventListener('click', () => canvas.requestPointerLock());
 window.addEventListener('mousemove', e => {
-    if (document.pointerLockElement === canvas) {
-        player.angle += e.movementX * SENSITIVITY;
-    }
+    mousePos.x = e.clientX;
+    mousePos.y = e.clientY;
 });
 
-// 左クリック射撃
 window.addEventListener('mousedown', e => {
-    if (document.pointerLockElement === canvas && e.button === 0 && playerHP > 0) {
-        bullets.push({ 
-            x: player.x, 
-            y: player.y, 
-            angle: player.angle, 
-            speed: 80, 
-            dist: 0 
-        });
+    if (e.button === 0 && playerHP > 0) {
+        const ang = Math.atan2(mousePos.y - canvas.height/2, mousePos.x - canvas.width/2);
+        bullets.push({ x: player.x, y: player.y, vx: Math.cos(ang) * 16, vy: Math.sin(ang) * 16, life: 60 });
     }
 });
-
-function getRelative(tx, ty) {
-    let dx = tx - player.x, dy = ty - player.y;
-    // 三人称視点のため、プレイヤーの少し後ろにカメラを配置
-    let camOffsetZ = -200; 
-    let rotX = dx * Math.cos(-player.angle) - dy * Math.sin(-player.angle);
-    let rotZ = dx * Math.sin(-player.angle) + dy * Math.cos(-player.angle) - camOffsetZ;
-    return { x: rotX, z: rotZ };
-}
 
 function update() {
     if (playerHP <= 0) return;
 
-    // 移動処理 (W:前, S:後, A:左, D:右)
-    let moveX = 0, moveY = 0;
-    if (keys['KeyW']) { moveX += Math.cos(player.angle); moveY += Math.sin(player.angle); }
-    if (keys['KeyS']) { moveX -= Math.cos(player.angle); moveY -= Math.sin(player.angle); }
-    if (keys['KeyA']) { moveX += Math.sin(player.angle); moveY -= Math.cos(player.angle); }
-    if (keys['KeyD']) { moveX -= Math.sin(player.angle); moveY += Math.cos(player.angle); }
-    
-    player.x += moveX * player.speed;
-    player.y += moveY * player.speed;
+    // 移動
+    if (keys['KeyW']) player.y -= player.speed;
+    if (keys['KeyS']) player.y += player.speed;
+    if (keys['KeyA']) player.x -= player.speed;
+    if (keys['KeyD']) player.x += player.speed;
 
-    // 弾の処理
-    bullets.forEach((b, i) => {
-        b.x += Math.cos(b.angle) * b.speed;
-        b.y += Math.sin(b.angle) * b.speed;
-        b.dist += b.speed;
-        if (b.dist > 3000) bullets.splice(i, 1);
+    // 敵の出現管理
+    let activeAndPending = enemies.length + (enemiesToSpawn - (enemiesKilledInWave + enemies.length));
+    if (enemies.length < 5 && enemiesKilledInWave + enemies.length < enemiesToSpawn) {
+        if (Math.random() < 0.02) {
+            const ang = Math.random() * Math.PI * 2;
+            enemies.push({
+                x: player.x + Math.cos(ang) * 800,
+                y: player.y + Math.sin(ang) * 800,
+                hp: 100, maxHp: 100, lastShot: Date.now(), flash: 0
+            });
+        }
+    }
 
+    // ウェーブクリア判定
+    if (enemiesKilledInWave >= enemiesToSpawn && waveClearTimer <= 0) {
+        waveClearTimer = 120; // 約2秒のインターバル
+    }
+
+    if (waveClearTimer > 0) {
+        waveClearTimer--;
+        if (waveClearTimer === 1) {
+            currentWave++;
+            enemiesKilledInWave = 0;
+            enemiesToSpawn = 5 + (currentWave * 2);
+            playerHP = Math.min(100, playerHP + 20); // ウェーブクリアで20回復
+            document.getElementById('hp-inner').style.width = playerHP + "%";
+            document.getElementById('level-display').innerText = `WAVE ${currentWave}`;
+        }
+    }
+
+    document.getElementById('remaining-display').innerText = `REMAINING: ${enemiesToSpawn - enemiesKilledInWave}`;
+
+    // 自分の弾
+    for (let i = bullets.length - 1; i >= 0; i--) {
+        let b = bullets[i];
+        b.x += b.vx; b.y += b.vy; b.life--;
+        if (b.life <= 0) { bullets.splice(i, 1); continue; }
+        
         enemies.forEach((e, ei) => {
-            if (Math.hypot(e.x - b.x, e.y - b.y) < 50) {
-                e.hp -= 34;
-                e.hit = 5;
-                damageTexts.push({ x: e.x, y: e.y, val: 34, life: 20 });
+            if (Math.hypot(e.x - b.x, e.y - b.y) < 25) {
+                e.hp -= 34; e.flash = 5;
+                damageTexts.push({ x: e.x, y: e.y, val: 34, life: 15 });
                 bullets.splice(i, 1);
-                if (e.hp <= 0) { enemies.splice(ei, 1); score++; document.getElementById('score').innerText = `KILLS: ${score}`; }
+                if (e.hp <= 0) {
+                    enemies.splice(ei, 1);
+                    score++;
+                    enemiesKilledInWave++;
+                    document.getElementById('score').innerText = `TOTAL KILLS: ${score}`;
+                }
             }
-        });
-    });
-
-    // 敵の生成
-    if (enemies.length < 8 && Math.random() < 0.03) {
-        let spawnAng = player.angle + (Math.random() - 0.5) * 2;
-        enemies.push({
-            x: player.x + Math.cos(spawnAng) * 1500,
-            y: player.y + Math.sin(spawnAng) * 1500,
-            hp: 100, maxHp: 100, hit: 0
         });
     }
 
-    damageTexts.forEach((t, i) => { t.life--; if (t.life <= 0) damageTexts.splice(i, 1); });
+    // 敵のAI
+    enemies.forEach(e => {
+        const ang = Math.atan2(player.y - e.y, player.x - e.x);
+        const dist = Math.hypot(player.x - e.x, player.y - e.y);
+        if (dist > 180) { e.x += Math.cos(ang) * (2 + currentWave*0.2); e.y += Math.sin(ang) * (2 + currentWave*0.2); }
+        if (Date.now() - e.lastShot > 2000 && dist < 600) {
+            enemyBullets.push({ x: e.x, y: e.y, vx: Math.cos(ang) * 7, vy: Math.sin(ang) * 7, life: 100 });
+            e.lastShot = Date.now();
+        }
+        if (e.flash > 0) e.flash--;
+    });
+
+    // 敵の弾
+    for (let i = enemyBullets.length - 1; i >= 0; i--) {
+        let eb = enemyBullets[i];
+        eb.x += eb.vx; eb.y += eb.vy; eb.life--;
+        if (Math.hypot(player.x - eb.x, player.y - eb.y) < 20) {
+            playerHP -= 10;
+            document.getElementById('hp-inner').style.width = Math.max(0, playerHP) + "%";
+            enemyBullets.splice(i, 1);
+            if (playerHP <= 0) { alert("TERMINATED. Final Wave: " + currentWave); location.reload(); }
+            continue;
+        }
+        if (eb.life <= 0) enemyBullets.splice(i, 1);
+    }
+
+    damageTexts.forEach((t, i) => { t.life--; t.y -= 2; if (t.life <= 0) damageTexts.splice(i, 1); });
 }
 
 function draw() {
     update();
-    
-    // 背景（床と空）
-    let horizon = canvas.height / 2;
-    ctx.fillStyle = '#111'; ctx.fillRect(0, 0, canvas.width, horizon);
-    ctx.fillStyle = '#222'; ctx.fillRect(0, horizon, canvas.width, canvas.height - horizon);
+    ctx.fillStyle = '#050805';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    let drawList = [];
+    ctx.save();
+    ctx.translate(canvas.width/2 - player.x, canvas.height/2 - player.y);
 
-    // プレイヤー自身（三人称視点なので描画する）
-    let pRel = getRelative(player.x, player.y);
-    if (pRel.z > 10) drawList.push({ type: 'player', ...pRel });
+    // グリッド
+    ctx.strokeStyle = '#112211';
+    for(let i=-2000; i<=2000; i+=100) {
+        ctx.beginPath(); ctx.moveTo(i, -2000); ctx.lineTo(i, 2000); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(-2000, i); ctx.lineTo(2000, i); ctx.stroke();
+    }
+
+    // プレイヤー
+    const shootAng = Math.atan2(mousePos.y - canvas.height/2, mousePos.x - canvas.width/2);
+    ctx.save();
+    ctx.translate(player.x, player.y);
+    ctx.rotate(shootAng);
+    ctx.fillStyle = '#0f0'; ctx.beginPath(); ctx.arc(0, 0, player.radius, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#0c0'; ctx.fillRect(10, -5, 25, 10);
+    ctx.restore();
 
     // 敵
     enemies.forEach(e => {
-        let rel = getRelative(e.x, e.y);
-        if (rel.z > 50) drawList.push({ type: 'enemy', ...rel, hp: e.hp, maxHp: e.maxHp, hit: e.hit });
+        ctx.fillStyle = e.flash > 0 ? '#fff' : '#f33';
+        ctx.beginPath(); ctx.arc(e.x, e.y, 20, 0, Math.PI*2); ctx.fill();
+        ctx.fillStyle = '#222'; ctx.fillRect(e.x - 25, e.y - 35, 50, 6);
+        ctx.fillStyle = '#f00'; ctx.fillRect(e.x - 25, e.y - 35, 50 * (e.hp/e.maxHp), 6);
     });
 
     // 弾
-    bullets.forEach(b => {
-        let rel = getRelative(b.x, b.y);
-        if (rel.z > 20) drawList.push({ type: 'bullet', ...rel });
-    });
+    ctx.fillStyle = '#fff'; bullets.forEach(b => ctx.fillRect(b.x-3, b.y-3, 6, 6));
+    ctx.fillStyle = '#f66'; enemyBullets.forEach(eb => ctx.fillRect(eb.x-3, eb.y-3, 6, 6));
 
-    // Zソート（奥から順に描画）
-    drawList.sort((a, b) => b.z - a.z);
+    // ダメージ表示
+    ctx.restore();
 
-    drawList.forEach(obj => {
-        let scale = (canvas.width / FOV) / obj.z;
-        let screenX = obj.x * scale + canvas.width / 2;
-        let screenY = horizon + (100 * scale); // 地面からの高さ調整
-
-        if (obj.type === 'player') {
-            ctx.fillStyle = '#0f0';
-            ctx.fillRect(screenX - 25 * scale, screenY - 80 * scale, 50 * scale, 80 * scale);
-        } else if (obj.type === 'enemy') {
-            ctx.fillStyle = obj.hit > 0 ? '#fff' : '#f44';
-            let h = 120 * scale;
-            ctx.fillRect(screenX - 40 * scale, screenY - h, 80 * scale, h);
-            
-            // 敵HPバー
-            ctx.fillStyle = '#000';
-            ctx.fillRect(screenX - 50 * scale, screenY - h - 30 * scale, 100 * scale, 10 * scale);
-            ctx.fillStyle = '#f00';
-            ctx.fillRect(screenX - 50 * scale, screenY - h - 30 * scale, (100 * scale) * (obj.hp/obj.maxHp), 10 * scale);
-        } else if (obj.type === 'bullet') {
-            ctx.fillStyle = '#ff0';
-            ctx.beginPath(); ctx.arc(screenX, screenY - 40 * scale, 8 * scale, 0, Math.PI*2); ctx.fill();
-        }
-    });
+    // WAVE CLEAR表示
+    if (waveClearTimer > 0) {
+        ctx.fillStyle = '#ff0';
+        ctx.font = 'bold 40px Consolas';
+        ctx.textAlign = 'center';
+        ctx.fillText("WAVE CLEAR! RECOVERING...", canvas.width/2, canvas.height/2);
+    }
 
     requestAnimationFrame(draw);
 }

@@ -2,34 +2,45 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>Tactical FPS - High Viewpoint</title>
+    <title>Tactical FPS - Combat Feedback</title>
     <style>
-        body { margin: 0; overflow: hidden; background: #050805; font-family: 'Courier New', monospace; }
+        body { margin: 0; overflow: hidden; background: #000; font-family: 'Segoe UI', sans-serif; }
         canvas { display: block; }
-        #ui { position: absolute; top: 20px; left: 20px; color: #5f5; pointer-events: none; text-shadow: 2px 2px #000; z-index: 10; }
-        #hp-bar { width: 250px; height: 15px; border: 2px solid #5f5; margin-top: 10px; background: #111; }
-        #hp-inner { width: 100%; height: 100%; background: #f22; transition: 0.1s; }
-        #crosshair { position: absolute; top: 50%; left: 50%; width: 20px; height: 20px; transform: translate(-50%, -50%); pointer-events: none; }
-        #crosshair::before { content: ''; position: absolute; top: 50%; left: 0; width: 100%; height: 2px; background: rgba(0, 255, 0, 0.5); }
-        #crosshair::after { content: ''; position: absolute; left: 50%; top: 0; width: 2px; height: 100%; background: rgba(0, 255, 0, 0.5); }
+        #ui { position: absolute; top: 20px; left: 20px; color: #0f0; pointer-events: none; text-shadow: 2px 2px #000; z-index: 10; }
+        #hp-bar { width: 200px; height: 10px; border: 2px solid #0f0; margin-top: 5px; background: #111; }
+        #hp-inner { width: 100%; height: 100%; background: #f00; transition: 0.2s; }
+        #crosshair { 
+            position: absolute; top: 50%; left: 50%; 
+            width: 24px; height: 24px; 
+            transform: translate(-50%, -50%); 
+            pointer-events: none; 
+        }
+        .ch-line { position: absolute; background: #0f0; transition: 0.1s; }
+        .v { left: 11px; top: 0; width: 2px; height: 100%; }
+        .h { left: 0; top: 11px; width: 100%; height: 2px; }
     </style>
 </head>
 <body>
 
     <div id="ui">
-        <h2>SECTOR 7 - HIGH EYE LEVEL</h2>
-        <p>CLICK TO START | WASD: MOVE | MOUSE: INVERTED AIM</p>
+        <div style="font-size: 1.2em; font-weight: bold;">COMBAT NEURAL LINK active</div>
         <div id="hp-bar"><div id="hp-inner"></div></div>
         <p id="score">KILLS: 0</p>
     </div>
-    <div id="crosshair"></div>
+
+    <!-- 照準器 -->
+    <div id="crosshair">
+        <div id="ch-v" class="ch-line v"></div>
+        <div id="ch-h" class="ch-line h"></div>
+    </div>
+
     <canvas id="gameCanvas"></canvas>
 
 <script>
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
-const scoreEl = document.getElementById('score');
-const hpInner = document.getElementById('hp-inner');
+const chV = document.getElementById('ch-v');
+const chH = document.getElementById('ch-h');
 
 function resize() {
     canvas.width = window.innerWidth;
@@ -39,28 +50,28 @@ window.addEventListener('resize', resize);
 resize();
 
 // --- 設定 ---
-const SENSITIVITY = 0.0015; 
+const SENSITIVITY = 0.002;
 const MAP_SIZE = 5000;
 const FOV = 1.0; 
 let score = 0;
 let playerHP = 100;
-let recoil = 0;
 let keys = {};
 let bullets = [];
 let enemyBullets = [];
 let enemies = [];
 let obstacles = [];
+let damageTexts = []; // ダメージ数字用
 
-const player = { x: 0, y: 0, angle: 0, speed: 5.0, radius: 25 };
+const player = { x: 0, y: 0, angle: 0, speed: 5.5, radius: 25 };
 
-// 障害物配置
-for(let i=0; i<45; i++) {
+// 障害物
+for(let i=0; i<40; i++) {
     obstacles.push({
         x: (Math.random() - 0.5) * MAP_SIZE,
         y: (Math.random() - 0.5) * MAP_SIZE,
         w: 300 + Math.random() * 400,
         h: 300 + Math.random() * 400,
-        color: `hsl(120, 5%, ${8 + Math.random() * 5}%)`
+        color: `hsl(140, 10%, ${10 + Math.random() * 5}%)`
     });
 }
 
@@ -71,25 +82,12 @@ function checkCollision(x, y, r = 5) {
     return false;
 }
 
-function getSafeLocation() {
-    let x, y, attempts = 0;
-    while(attempts < 50) {
-        let ang = Math.random() * Math.PI * 2;
-        let dist = 1500 + Math.random() * 1000;
-        x = player.x + Math.cos(ang) * dist;
-        y = player.y + Math.sin(ang) * dist;
-        if (!checkCollision(x, y, 60)) return { x, y };
-        attempts++;
-    }
-    return { x: 2500, y: 2500 };
-}
-
 canvas.addEventListener('click', () => canvas.requestPointerLock());
 
-// マウス操作を反転 (movementX をマイナスで加算)
+// マウス操作：直感的な方向に戻しました
 window.addEventListener('mousemove', e => {
     if (document.pointerLockElement === canvas) {
-        player.angle -= e.movementX * SENSITIVITY; 
+        player.angle += e.movementX * SENSITIVITY; 
     }
 });
 
@@ -97,14 +95,12 @@ window.addEventListener('keydown', e => keys[e.code] = true);
 window.addEventListener('keyup', e => keys[e.code] = false);
 window.addEventListener('mousedown', () => {
     if (document.pointerLockElement === canvas && playerHP > 0) {
-        bullets.push({ x: player.x, y: player.y, angle: player.angle, speed: 75, dist: 0 });
-        recoil = 15;
+        bullets.push({ x: player.x, y: player.y, angle: player.angle, speed: 80, dist: 0 });
     }
 });
 
 function getRelative(tx, ty) {
-    let dx = tx - player.x;
-    let dy = ty - player.y;
+    let dx = tx - player.x, dy = ty - player.y;
     let rotX = dx * Math.cos(-player.angle) - dy * Math.sin(-player.angle);
     let rotZ = dx * Math.sin(-player.angle) + dy * Math.cos(-player.angle);
     return { x: rotX, z: rotZ };
@@ -123,26 +119,41 @@ function update() {
     let ny = player.y + my * player.speed;
     if (!checkCollision(nx, player.y, player.radius)) player.x = nx;
     if (!checkCollision(player.x, ny, player.radius)) player.y = ny;
-    
-    recoil *= 0.85;
 
+    // ダメージテキスト更新
+    for (let i = damageTexts.length - 1; i >= 0; i--) {
+        damageTexts[i].life--;
+        damageTexts[i].y -= 1; 
+        if (damageTexts[i].life <= 0) damageTexts.splice(i, 1);
+    }
+
+    // 自分の弾
     for (let i = bullets.length - 1; i >= 0; i--) {
         let b = bullets[i];
         b.x += Math.cos(b.angle) * b.speed;
         b.y += Math.sin(b.angle) * b.speed;
         b.dist += b.speed;
         if (b.dist > 4000 || checkCollision(b.x, b.y, 5)) { bullets.splice(i, 1); continue; }
+        
         for (let j = enemies.length - 1; j >= 0; j--) {
-            if (Math.hypot(enemies[j].x - b.x, enemies[j].y - b.y) < 70) {
-                enemies.splice(j, 1);
+            let e = enemies[j];
+            if (Math.hypot(e.x - b.x, e.y - b.y) < 60) {
+                // 当たった時のエフェクト
+                damageTexts.push({ x: e.x, y: e.y, val: 25, life: 30 });
+                e.hp -= 25;
+                e.hitFlash = 5;
                 bullets.splice(i, 1);
-                score++;
-                scoreEl.innerText = `KILLS: ${score}`;
+                if (e.hp <= 0) {
+                    enemies.splice(j, 1);
+                    score++;
+                    document.getElementById('score').innerText = `KILLS: ${score}`;
+                }
                 break;
             }
         }
     }
 
+    // 敵の弾
     for (let i = enemyBullets.length - 1; i >= 0; i--) {
         let eb = enemyBullets[i];
         eb.x += Math.cos(eb.angle) * eb.speed;
@@ -150,38 +161,53 @@ function update() {
         if (checkCollision(eb.x, eb.y, 5)) { enemyBullets.splice(i, 1); continue; }
         if (Math.hypot(player.x - eb.x, player.y - eb.y) < 40) {
             playerHP -= 10;
-            hpInner.style.width = Math.max(0, playerHP) + "%";
+            document.getElementById('hp-inner').style.width = Math.max(0, playerHP) + "%";
             enemyBullets.splice(i, 1);
             if (playerHP <= 0) location.reload();
         }
     }
 
-    if (enemies.length < 5 && Math.random() < 0.015) {
-        let p = getSafeLocation();
-        enemies.push({ x: p.x, y: p.y, lastShot: Date.now() + 800 });
+    if (enemies.length < 5 && Math.random() < 0.02) {
+        let ang = Math.random() * Math.PI * 2;
+        let d = 1500 + Math.random() * 500;
+        let ex = player.x + Math.cos(ang) * d;
+        let ey = player.y + Math.sin(ang) * d;
+        if (!checkCollision(ex, ey, 60)) {
+            enemies.push({ x: ex, y: ey, hp: 100, lastShot: Date.now() + 1000, hitFlash: 0 });
+        }
     }
 
+    let aimOnEnemy = false;
     enemies.forEach(e => {
         let d = Math.hypot(player.x - e.x, player.y - e.y);
         let ang = Math.atan2(player.y - e.y, player.x - e.x);
-        if (d > 700) {
-            let vx = Math.cos(ang) * 2.5;
-            let vy = Math.sin(ang) * 2.5;
+        
+        // 照準が合っているか判定
+        let rel = getRelative(e.x, e.y);
+        if (rel.z > 0 && Math.abs(rel.x / rel.z) < 0.1) aimOnEnemy = true;
+
+        if (d > 600) {
+            let vx = Math.cos(ang) * 2.5, vy = Math.sin(ang) * 2.5;
             if (!checkCollision(e.x + vx, e.y + vy, 35)) { e.x += vx; e.y += vy; }
-        } else if (Date.now() - e.lastShot > 2200) {
-            enemyBullets.push({ x: e.x, y: e.y, angle: ang, speed: 14 });
+        } else if (Date.now() - e.lastShot > 2000) {
+            enemyBullets.push({ x: e.x, y: e.y, angle: ang, speed: 15 });
             e.lastShot = Date.now();
         }
+        if (e.hitFlash > 0) e.hitFlash--;
     });
+
+    // 照準の色変更
+    const color = aimOnEnemy ? "#f00" : "#0f0";
+    chV.style.background = color; chH.style.background = color;
 }
 
 function draw() {
     update();
     
-    // 背景: ホライゾンをさらに下げて視点を高く見せる
-    let horizon = canvas.height * 0.7; 
-    ctx.fillStyle = '#050a05'; ctx.fillRect(0, 0, canvas.width, horizon);
-    ctx.fillStyle = '#080d08'; ctx.fillRect(0, horizon, canvas.width, canvas.height - horizon);
+    // 背景
+    let h_line = canvas.height / 2; // 視点を真ん中（等身大）に
+    ctx.fillStyle = '#050805'; ctx.fillRect(0, 0, canvas.width, h_line);
+    ctx.fillStyle = '#0a0d0a'; ctx.fillRect(0, h_line, canvas.width, canvas.height - h_line);
 
     let drawList = [];
     obstacles.forEach(o => {
@@ -190,11 +216,15 @@ function draw() {
     });
     enemies.forEach(e => {
         let rel = getRelative(e.x, e.y);
-        if (rel.z > 20) drawList.push({ type: 'enemy', ...rel });
+        if (rel.z > 20) drawList.push({ type: 'enemy', ...rel, flash: e.hitFlash });
     });
     bullets.concat(enemyBullets).forEach(b => {
         let rel = getRelative(b.x, b.y);
         if (rel.z > 10) drawList.push({ type: 'bullet', ...rel, color: b.speed > 30 ? '#0f0' : '#f00' });
+    });
+    damageTexts.forEach(t => {
+        let rel = getRelative(t.x, t.y);
+        if (rel.z > 10) drawList.push({ type: 'text', ...rel, val: t.val, life: t.life });
     });
 
     drawList.sort((a, b) => b.z - a.z);
@@ -204,30 +234,25 @@ function draw() {
         let screenX = obj.x * scale + canvas.width / 2;
 
         if (obj.type === 'box') {
-            let w = obj.w * scale;
-            let h = 2000 * scale; // 壁を高くして見下ろし感を出す
+            let w = obj.w * scale, h = 1500 * scale;
             ctx.fillStyle = obj.color;
-            ctx.fillRect(screenX - w/2, horizon - h, w, h);
-            ctx.strokeStyle = '#1a331a'; ctx.strokeRect(screenX - w/2, horizon - h, w, h);
+            ctx.fillRect(screenX - w/2, h_line - h/2, w, h);
+            ctx.strokeStyle = '#1f3f1f'; ctx.strokeRect(screenX - w/2, h_line - h/2, w, h);
         } else if (obj.type === 'enemy') {
-            let h = 300 * scale; 
-            let w = 150 * scale;
-            ctx.fillStyle = '#622';
-            ctx.fillRect(screenX - w/2, horizon - h, w, h);
-            ctx.fillStyle = '#f00'; ctx.fillRect(screenX - w/2, horizon - h, w, h/6);
+            let h = 250 * scale, w = 120 * scale;
+            ctx.fillStyle = obj.flash > 0 ? '#fff' : '#622';
+            ctx.fillRect(screenX - w/2, h_line - h/2, w, h);
+            ctx.fillStyle = '#f00'; ctx.fillRect(screenX - w/2, h_line - h/2, w, h/8);
         } else if (obj.type === 'bullet') {
-            let s = 8 * scale;
+            let s = 10 * scale;
             ctx.fillStyle = obj.color;
-            ctx.beginPath(); ctx.arc(screenX, horizon - 150 * scale, s, 0, Math.PI*2); ctx.fill();
+            ctx.beginPath(); ctx.arc(screenX, h_line, s, 0, Math.PI*2); ctx.fill();
+        } else if (obj.type === 'text') {
+            ctx.fillStyle = `rgba(255, 255, 0, ${obj.life / 30})`;
+            ctx.font = `bold ${30 * scale}px Arial`;
+            ctx.fillText(obj.val, screenX, h_line - 100 * scale);
         }
     });
-
-    // 銃の位置を調整
-    ctx.save();
-    let gx = canvas.width * 0.8, gy = canvas.height - 150 + recoil;
-    ctx.fillStyle = '#111'; ctx.fillRect(gx - 40, gy, 80, 400);
-    ctx.fillStyle = '#000'; ctx.fillRect(gx - 35, gy - 15, 70, 40);
-    ctx.restore();
 
     requestAnimationFrame(draw);
 }

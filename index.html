@@ -2,25 +2,27 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>Survival Tactical - Combat</title>
+    <title>Survival Tactical - 1st Person</title>
     <style>
-        body { margin: 0; overflow: hidden; background: #0e120e; font-family: 'Courier New', monospace; }
+        body { margin: 0; overflow: hidden; background: #050805; font-family: 'Courier New', monospace; }
         canvas { display: block; }
-        #ui { position: absolute; top: 20px; left: 20px; color: #5f5; pointer-events: none; }
-        #hp-bar { width: 200px; height: 20px; border: 2px solid #5f5; margin-top: 10px; }
-        #hp-inner { width: 100%; height: 100%; background: #f22; transition: 0.3s; }
+        #ui { position: absolute; top: 20px; left: 20px; color: #5f5; pointer-events: none; text-shadow: 2px 2px #000; }
+        #hp-bar { width: 250px; height: 15px; border: 2px solid #5f5; margin-top: 10px; background: #111; }
+        #hp-inner { width: 100%; height: 100%; background: #f22; transition: 0.1s; }
         #crosshair { 
-            position: absolute; top: 50%; left: 50%; width: 24px; height: 24px; 
-            border: 1px solid rgba(0, 255, 0, 0.8); transform: translate(-50%, -50%); border-radius: 50%;
+            position: absolute; top: 50%; left: 50%; width: 20px; height: 20px; 
+            border: 2px solid rgba(0, 255, 0, 0.5); transform: translate(-50%, -50%); border-radius: 50%;
         }
+        #crosshair::before { content: ''; position: absolute; top: 50%; left: -5px; width: 30px; height: 2px; background: rgba(0,255,0,0.5); transform: translateY(-50%); }
+        #crosshair::after { content: ''; position: absolute; left: 50%; top: -5px; width: 2px; height: 30px; background: rgba(0,255,0,0.5); transform: translateX(-50%); }
     </style>
 </head>
 <body>
     <div id="ui">
-        <h1>SECTOR 7 - ENGAGED</h1>
-        <p>CLICK TO START | WASD TO MOVE</p>
+        <h2>SECTOR 7 - FPS MODE</h2>
+        <p>MOUSE: LOOK | CLICK: FIRE | WASD: MOVE</p>
         <div id="hp-bar"><div id="hp-inner"></div></div>
-        <p id="score">KILLS: 0</p>
+        <p id="score">CONFIRMED KILLS: 0</p>
     </div>
     <div id="crosshair"></div>
     <canvas id="gameCanvas"></canvas>
@@ -34,31 +36,34 @@ const hpInner = document.getElementById('hp-inner');
 canvas.width = window.innerWidth;
 canvas.height = window.innerHeight;
 
-// --- 設定 ---
-const SENSITIVITY = 0.0008; // さらに低感度（精密射撃用）
-const MAP_SIZE = 2500;
+// --- ゲーム設定 ---
+const SENSITIVITY = 0.002;
+const MAP_SIZE = 4000;
+const FOV = 0.8; // 視野角
 let score = 0;
 let playerHP = 100;
+let recoil = 0;
 let keys = {};
-let bullets = [];     // 自分の弾
-let enemyBullets = []; // 敵の弾
+let bullets = [];
+let enemyBullets = [];
 let enemies = [];
 let obstacles = [];
 
 const player = {
-    x: 0, y: 0, angle: -Math.PI / 2, speed: 2.8, radius: 15, walkCycle: 0
+    x: 0, y: 0, angle: 0, speed: 4.0, radius: 20
 };
 
-// 障害物生成
-for(let i=0; i<20; i++) {
+// 障害物（3D空間の柱として表現）
+for(let i=0; i<40; i++) {
     obstacles.push({
-        x: Math.random() * MAP_SIZE - MAP_SIZE/2,
-        y: Math.random() * MAP_SIZE - MAP_SIZE/2,
-        w: 80 + Math.random() * 120,
-        h: 80 + Math.random() * 120
+        x: (Math.random() - 0.5) * MAP_SIZE,
+        y: (Math.random() - 0.5) * MAP_SIZE,
+        size: 50 + Math.random() * 100,
+        color: `hsl(120, 20%, ${10 + Math.random() * 20}%)`
     });
 }
 
+// 入力イベント
 canvas.addEventListener('click', () => canvas.requestPointerLock());
 window.addEventListener('mousemove', e => {
     if (document.pointerLockElement === canvas) player.angle += e.movementX * SENSITIVITY;
@@ -67,43 +72,38 @@ window.addEventListener('keydown', e => keys[e.code] = true);
 window.addEventListener('keyup', e => keys[e.code] = false);
 window.addEventListener('mousedown', () => {
     if (document.pointerLockElement === canvas && playerHP > 0) {
-        bullets.push({ x: player.x, y: player.y, angle: player.angle, speed: 18 });
+        bullets.push({ x: player.x, y: player.y, angle: player.angle, speed: 25, dist: 0 });
+        recoil = 15; // 射撃反動
     }
 });
-
-function isColliding(x, y, r) {
-    for (let o of obstacles) {
-        if (x + r > o.x && x - r < o.x + o.w && y + r > o.y && y - r < o.y + o.h) return true;
-    }
-    return false;
-}
 
 function update() {
     if (playerHP <= 0) return;
 
-    let moveX = 0, moveY = 0;
-    if (keys['KeyW']) { moveX += Math.cos(player.angle); moveY += Math.sin(player.angle); }
-    if (keys['KeyS']) { moveX -= Math.cos(player.angle); moveY -= Math.sin(player.angle); }
-    if (keys['KeyA']) { moveX += Math.sin(player.angle); moveY -= Math.cos(player.angle); }
-    if (keys['KeyD']) { moveX -= Math.sin(player.angle); moveY += Math.cos(player.angle); }
-
-    let nextX = player.x + moveX * player.speed;
-    let nextY = player.y + moveY * player.speed;
-    if (!isColliding(nextX, player.y, player.radius)) player.x = nextX;
-    if (!isColliding(player.x, nextY, player.radius)) player.y = nextY;
-    if (moveX !== 0 || moveY !== 0) player.walkCycle += 0.12;
+    // 移動（プレイヤーの向き基準）
+    let dx = 0, dy = 0;
+    if (keys['KeyW']) { dx += Math.cos(player.angle); dy += Math.sin(player.angle); }
+    if (keys['KeyS']) { dx -= Math.cos(player.angle); dy -= Math.sin(player.angle); }
+    if (keys['KeyA']) { dx += Math.sin(player.angle); dy -= Math.cos(player.angle); }
+    if (keys['KeyD']) { dx -= Math.sin(player.angle); dy += Math.cos(player.angle); }
+    
+    player.x += dx * player.speed;
+    player.y += dy * player.speed;
+    recoil *= 0.8;
 
     // 自分の弾
     bullets.forEach((b, i) => {
         b.x += Math.cos(b.angle) * b.speed;
         b.y += Math.sin(b.angle) * b.speed;
-        if (isColliding(b.x, b.y, 2)) bullets.splice(i, 1);
+        b.dist += b.speed;
+        if (b.dist > 2000) bullets.splice(i, 1);
+        
         enemies.forEach((e, ei) => {
-            if (Math.hypot(e.x - b.x, e.y - b.y) < 20) {
+            if (Math.hypot(e.x - b.x, e.y - b.y) < 30) {
                 enemies.splice(ei, 1);
                 bullets.splice(i, 1);
                 score++;
-                scoreEl.innerText = `KILLS: ${score}`;
+                scoreEl.innerText = `CONFIRMED KILLS: ${score}`;
             }
         });
     });
@@ -112,32 +112,29 @@ function update() {
     enemyBullets.forEach((eb, i) => {
         eb.x += Math.cos(eb.angle) * eb.speed;
         eb.y += Math.sin(eb.angle) * eb.speed;
-        if (isColliding(eb.x, eb.y, 2)) enemyBullets.splice(i, 1);
-        if (Math.hypot(player.x - eb.x, player.y - eb.y) < 15) {
-            playerHP -= 10;
+        let d = Math.hypot(player.x - eb.x, player.y - eb.y);
+        if (d < 20) {
+            playerHP -= 5;
             hpInner.style.width = playerHP + "%";
             enemyBullets.splice(i, 1);
-            if (playerHP <= 0) alert("MISSION FAILED - 最終スコア: " + score);
+            if (playerHP <= 0) location.reload();
         }
+        if (d > 2000) enemyBullets.splice(i, 1);
     });
 
-    // 敵のスポーンとAI
-    if (enemies.length < 6 && Math.random() < 0.015) {
-        enemies.push({ x: player.x + (Math.random()-0.5)*1200, y: player.y + (Math.random()-0.5)*1200, lastShot: 0 });
+    // 敵の生成とAI
+    if (enemies.length < 10 && Math.random() < 0.03) {
+        let a = Math.random() * Math.PI * 2;
+        enemies.push({ x: player.x + Math.cos(a)*1000, y: player.y + Math.sin(a)*1000, lastShot: 0 });
     }
     enemies.forEach(e => {
-        let dist = Math.hypot(player.x - e.x, player.y - e.y);
+        let d = Math.hypot(player.x - e.x, player.y - e.y);
         let ang = Math.atan2(player.y - e.y, player.x - e.x);
-        
-        if (dist > 250) { // 一定距離まで近づく
-            let vx = Math.cos(ang) * 1.5;
-            let vy = Math.sin(ang) * 1.5;
-            if (!isColliding(e.x + vx, e.y + vy, 15)) { e.x += vx; e.y += vy; }
-        } else { // 射程内なら射撃
-            if (Date.now() - e.lastShot > 1500) { // 1.5秒間隔
-                enemyBullets.push({ x: e.x, y: e.y, angle: ang, speed: 8 });
-                e.lastShot = Date.now();
-            }
+        if (d > 300) {
+            e.x += Math.cos(ang) * 2; e.y += Math.sin(ang) * 2;
+        } else if (Date.now() - e.lastShot > 2000) {
+            enemyBullets.push({ x: e.x, y: e.y, angle: ang, speed: 10 });
+            e.lastShot = Date.now();
         }
     });
 }
@@ -145,40 +142,98 @@ function update() {
 function draw() {
     update();
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.save();
-    ctx.translate(canvas.width / 2, canvas.height * 0.7);
-    ctx.rotate(-player.angle - Math.PI/2);
-    ctx.translate(-player.x, -player.y);
 
-    // 背景と障害物
-    ctx.fillStyle = '#1a1a14'; ctx.fillRect(player.x-1500, player.y-1500, 3000, 3000);
-    ctx.fillStyle = '#333';
+    // 背景（空と地面）
+    ctx.fillStyle = '#050a05'; ctx.fillRect(0, 0, canvas.width, canvas.height/2);
+    ctx.fillStyle = '#0a100a'; ctx.fillRect(0, canvas.height/2, canvas.width, canvas.height/2);
+
+    // 描画オブジェクトを一つにまとめる
+    let drawList = [];
+
+    // 障害物をリストに追加
     obstacles.forEach(o => {
-        ctx.fillRect(o.x, o.y, o.w, o.h);
-        ctx.strokeStyle = '#444'; ctx.strokeRect(o.x, o.y, o.w, o.h);
+        let rel = getRelative(o.x, o.y);
+        if (rel.z > 10) drawList.push({ type: 'box', ...rel, size: o.size, color: o.color });
     });
 
-    // 敵
-    enemies.forEach(e => drawHuman(e.x, e.y, Math.atan2(player.y-e.y, player.x-e.x), '#844', 0));
-    
-    // 弾
-    ctx.fillStyle = '#ff0'; bullets.forEach(b => ctx.fillRect(b.x, b.y, 4, 4));
-    ctx.fillStyle = '#f00'; enemyBullets.forEach(eb => ctx.fillRect(eb.x, eb.y, 4, 4));
+    // 敵をリストに追加
+    enemies.forEach(e => {
+        let rel = getRelative(e.x, e.y);
+        if (rel.z > 10) drawList.push({ type: 'enemy', ...rel });
+    });
 
-    ctx.restore();
-    if (playerHP > 0) drawHuman(canvas.width / 2, canvas.height * 0.7, Math.PI/2, '#464', player.walkCycle);
+    // 敵の弾をリストに追加
+    enemyBullets.forEach(eb => {
+        let rel = getRelative(eb.x, eb.y);
+        if (rel.z > 10) drawList.push({ type: 'ebullet', ...rel });
+    });
+
+    // 遠い順にソート（Zバッファの代わり）
+    drawList.sort((a, b) => b.z - a.z);
+
+    // 描画実行
+    drawList.forEach(obj => {
+        let screenX = (obj.x / obj.z) * (canvas.width / FOV) + canvas.width / 2;
+        let scale = 1000 / obj.z;
+
+        if (obj.type === 'box') {
+            ctx.fillStyle = obj.color;
+            let w = obj.size * scale;
+            let h = 400 * scale;
+            ctx.fillRect(screenX - w/2, canvas.height/2 - h, w, h);
+            ctx.strokeStyle = '#1f1'; ctx.strokeRect(screenX - w/2, canvas.height/2 - h, w, h);
+        } else if (obj.type === 'enemy') {
+            ctx.fillStyle = '#f33';
+            let h = 120 * scale;
+            let w = 60 * scale;
+            ctx.fillRect(screenX - w/2, canvas.height/2 - h, w, h);
+            // 敵の目（赤く光る）
+            ctx.fillStyle = '#fff';
+            ctx.fillRect(screenX - w/4, canvas.height/2 - h*0.8, w/5, h/10);
+        } else if (obj.type === 'ebullet') {
+            ctx.fillStyle = '#f00';
+            let s = 10 * scale;
+            ctx.beginPath(); ctx.arc(screenX, canvas.height/2 - 30*scale, s, 0, Math.PI*2); ctx.fill();
+        }
+    });
+
+    // --- 自分の銃（UIとして描画） ---
+    drawWeapon();
+
     requestAnimationFrame(draw);
 }
 
-function drawHuman(x, y, angle, color, walk) {
+// プレイヤーから見た相対座標（x: 横, z: 奥行き）を計算
+function getRelative(tx, ty) {
+    let dx = tx - player.x;
+    let dy = ty - player.y;
+    // プレイヤーの角度に合わせて回転
+    let rotX = dx * Math.cos(-player.angle) - dy * Math.sin(-player.angle);
+    let rotZ = dx * Math.sin(-player.angle) + dy * Math.cos(-player.angle);
+    return { x: rotX, z: rotZ };
+}
+
+function drawWeapon() {
     ctx.save();
-    ctx.translate(x, y); ctx.rotate(angle);
-    let sway = Math.sin(walk) * 4;
-    ctx.fillStyle = color; ctx.beginPath(); ctx.ellipse(0, 0, 18, 22, 0, 0, Math.PI*2); ctx.fill();
-    ctx.fillStyle = '#c49c7a'; ctx.beginPath(); ctx.arc(5, 0, 10, 0, Math.PI*2); ctx.fill();
-    ctx.fillStyle = '#222'; ctx.fillRect(15, -3 + sway, 28, 6);
+    let gunX = canvas.width * 0.7;
+    let gunY = canvas.height - 200 + recoil;
+    
+    // 銃身
+    ctx.fillStyle = '#222';
+    ctx.fillRect(gunX - 40, gunY, 80, 250);
+    ctx.fillStyle = '#111';
+    ctx.fillRect(gunX - 35, gunY - 20, 70, 50);
+    
+    // マズル
+    if (recoil > 5) {
+        ctx.fillStyle = '#ff0';
+        ctx.beginPath();
+        ctx.arc(gunX, gunY - 40, 30, 0, Math.PI*2);
+        ctx.fill();
+    }
     ctx.restore();
 }
+
 draw();
 </script>
 </body>

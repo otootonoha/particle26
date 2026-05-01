@@ -2,24 +2,33 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>3rd Person Tactical</title>
+    <title>Survival Tactical TPS</title>
     <style>
-        body { margin: 0; overflow: hidden; background: #1a1a1a; font-family: sans-serif; }
+        body { margin: 0; overflow: hidden; background: #0e120e; font-family: 'Courier New', Courier, monospace; }
         canvas { display: block; }
-        #ui { position: absolute; top: 20px; left: 20px; color: white; pointer-events: none; text-shadow: 2px 2px 4px #000; }
+        #ui { position: absolute; top: 20px; left: 20px; color: #55ff55; pointer-events: none; text-shadow: 1px 1px 2px #000; }
+        #crosshair { 
+            position: absolute; top: 50%; left: 50%; 
+            width: 20px; height: 20px; 
+            border: 2px solid rgba(0, 255, 0, 0.5); 
+            transform: translate(-50%, -50%); border-radius: 50%;
+        }
     </style>
 </head>
 <body>
     <div id="ui">
-        <h1>TPS MODE ACTIVE</h1>
-        <p>移動: WASD | 照準: マウス移動 | 射撃: 左クリック</p>
-        <p id="score">Kills: 0</p>
+        <h1>SURVIVAL MODE</h1>
+        <p>画面クリックで開始 (Escで解除)</p>
+        <p>移動: WASD | 射撃: 左クリック</p>
+        <p id="score">ELIMINATED: 0</p>
     </div>
+    <div id="crosshair"></div>
     <canvas id="gameCanvas"></canvas>
 
 <script>
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
+const scoreEl = document.getElementById('score');
 
 canvas.width = window.innerWidth;
 canvas.height = window.innerHeight;
@@ -28,50 +37,61 @@ let score = 0;
 let keys = {};
 let bullets = [];
 let enemies = [];
-let walls = [
-    {x: 500, y: 500, w: 200, h: 200},
-    {x: -200, y: 800, w: 1000, h: 50},
-    {x: 1200, y: 200, w: 50, h: 800}
-];
+let obstacles = [];
+
+// --- 設定 ---
+const SENSITIVITY = 0.0015; // マウス感度（さらに低く設定）
+const OBSTACLE_COUNT = 15;
+const MAP_SIZE = 2000;
 
 const player = {
-    x: 100, y: 100,
-    angle: 0,
-    speed: 4,
-    walkCycle: 0
+    x: 0, y: 0,
+    angle: -Math.PI / 2,
+    speed: 3,
+    walkCycle: 0,
+    radius: 15
 };
+
+// 障害物の生成（サバイバル風：コンテナやドラム缶）
+for(let i=0; i<OBSTACLE_COUNT; i++) {
+    obstacles.push({
+        x: Math.random() * MAP_SIZE - MAP_SIZE/2,
+        y: Math.random() * MAP_SIZE - MAP_SIZE/2,
+        w: Math.random() * 100 + 50,
+        h: Math.random() * 100 + 50,
+        type: Math.random() > 0.5 ? 'crate' : 'barrel'
+    });
+}
+
+// ポインターロック（画面クリックでマウスを固定）
+canvas.addEventListener('click', () => {
+    canvas.requestPointerLock();
+});
+
+window.addEventListener('mousemove', e => {
+    if (document.pointerLockElement === canvas) {
+        // movementXを使うことで、画面端に関係なくスムーズに回転
+        player.angle += e.movementX * SENSITIVITY;
+    }
+});
 
 window.addEventListener('keydown', e => keys[e.code] = true);
 window.addEventListener('keyup', e => keys[e.code] = false);
 window.addEventListener('mousedown', () => {
-    // プレイヤーの向き（常に画面上方向＝0度とするTPS視点）に弾を放つ
-    bullets.push({
-        x: player.x,
-        y: player.y,
-        angle: player.angle,
-        speed: 15
-    });
+    if (document.pointerLockElement === canvas) {
+        bullets.push({ x: player.x, y: player.y, angle: player.angle, speed: 20 });
+    }
 });
 
-let mouseX = 0;
-window.addEventListener('mousemove', e => {
-    // マウスの左右移動で視界（プレイヤーの角度）を回転させる
-    let diff = e.clientX - (canvas.width / 2);
-    player.angle += diff * 0.005;
-});
-
-function isHitWall(x, y) {
-    for (let w of walls) {
-        if (x > w.x && x < w.x + w.w && y > w.y && y < w.y + w.h) return true;
+function isColliding(x, y, r) {
+    for (let o of obstacles) {
+        if (x + r > o.x && x - r < o.x + o.w && y + r > o.y && y - r < o.y + o.h) return true;
     }
     return false;
 }
 
 function update() {
-    let moveX = 0;
-    let moveY = 0;
-
-    // 三人称視点での移動：向いている方向を基準にWASD
+    let moveX = 0, moveY = 0;
     if (keys['KeyW']) { moveX += Math.cos(player.angle); moveY += Math.sin(player.angle); }
     if (keys['KeyS']) { moveX -= Math.cos(player.angle); moveY -= Math.sin(player.angle); }
     if (keys['KeyA']) { moveX += Math.sin(player.angle); moveY -= Math.cos(player.angle); }
@@ -80,64 +100,76 @@ function update() {
     let nextX = player.x + moveX * player.speed;
     let nextY = player.y + moveY * player.speed;
 
-    if (!isHitWall(nextX, player.y)) player.x = nextX;
-    if (!isHitWall(player.x, nextY)) player.y = nextY;
+    if (!isColliding(nextX, player.y, player.radius)) player.x = nextX;
+    if (!isColliding(player.x, nextY, player.radius)) player.y = nextY;
 
     if (moveX !== 0 || moveY !== 0) player.walkCycle += 0.15;
 
-    // 敵AIと弾の更新
-    bullets.forEach((b, i) => {
+    // 弾の更新
+    for(let i=bullets.length-1; i>=0; i--) {
+        let b = bullets[i];
         b.x += Math.cos(b.angle) * b.speed;
         b.y += Math.sin(b.angle) * b.speed;
-        if (isHitWall(b.x, b.y)) bullets.splice(i, 1);
-    });
-
-    if (frameCount % 100 === 0) enemies.push({x: player.x + Math.random()*800-400, y: player.y - 600});
-}
-
-let frameCount = 0;
-function draw() {
-    frameCount++;
-    update();
-
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    
-    // --- カメラ制御 ---
-    // プレイヤーが常に中心に来るように、世界全体を逆方向に動かして回転させる
-    ctx.save();
-    ctx.translate(canvas.width / 2, canvas.height * 0.7); // プレイヤーを画面下寄りに配置
-    ctx.rotate(-player.angle - Math.PI/2); // プレイヤーの向きを常に「上」にする
-    ctx.translate(-player.x, -player.y);
-
-    // 地面のグリッド（移動感が出る）
-    ctx.strokeStyle = '#334433';
-    for(let i=-2000; i<2000; i+=100){
-        ctx.beginPath(); ctx.moveTo(i, -2000); ctx.lineTo(i, 2000); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(-2000, i); ctx.lineTo(2000, i); ctx.stroke();
+        if(isColliding(b.x, b.y, 2)) bullets.splice(i, 1);
+        
+        // 敵との判定
+        enemies.forEach((e, ei) => {
+            if(Math.hypot(e.x - b.x, e.y - b.y) < 20) {
+                enemies.splice(ei, 1);
+                bullets.splice(i, 1);
+                score++;
+                scoreEl.innerText = `ELIMINATED: ${score}`;
+            }
+        });
     }
 
-    // 壁の描画
-    ctx.fillStyle = '#444';
-    walls.forEach(w => ctx.fillRect(w.x, w.y, w.w, w.h));
-
-    // 敵の描画
+    // 敵のスポーンと移動
+    if (enemies.length < 5 && Math.random() < 0.02) {
+        enemies.push({ x: player.x + (Math.random()-0.5)*1000, y: player.y - 600 });
+    }
     enemies.forEach(e => {
-        drawHuman(e.x, e.y, Math.atan2(player.y-e.y, player.x-e.x), '#822', 0);
+        let ang = Math.atan2(player.y - e.y, player.x - e.x);
+        let vx = Math.cos(ang) * 1.2;
+        let vy = Math.sin(ang) * 1.2;
+        if (!isColliding(e.x + vx, e.y + vy, 15)) {
+            e.x += vx; e.y += vy;
+        }
+    });
+}
+
+function draw() {
+    update();
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    ctx.save();
+    ctx.translate(canvas.width / 2, canvas.height * 0.7);
+    ctx.rotate(-player.angle - Math.PI/2);
+    ctx.translate(-player.x, -player.y);
+
+    // サバイバルな地面（泥っぽい色）
+    ctx.fillStyle = '#1a1d1a';
+    ctx.fillRect(player.x - 1000, player.y - 1000, 2000, 2000);
+    
+    // 障害物（コンテナなど）
+    obstacles.forEach(o => {
+        ctx.fillStyle = o.type === 'crate' ? '#3e2a1a' : '#2a3e3e';
+        ctx.fillRect(o.x, o.y, o.w, o.h);
+        // ハイライト
+        ctx.strokeStyle = '#555';
+        ctx.strokeRect(o.x, o.y, o.w, o.h);
     });
 
-    // 弾の描画
-    ctx.fillStyle = '#ff0';
-    bullets.forEach(b => { ctx.beginPath(); ctx.arc(b.x, b.y, 3, 0, Math.PI*2); ctx.fill(); });
+    // 敵
+    enemies.forEach(e => drawHuman(e.x, e.y, Math.atan2(player.y-e.y, player.x-e.x), '#633', 0));
+
+    // 弾
+    ctx.fillStyle = '#ffaa00';
+    bullets.forEach(b => { ctx.beginPath(); ctx.arc(b.x, b.y, 2, 0, Math.PI*2); ctx.fill(); });
 
     ctx.restore();
 
-    // --- プレイヤー（自分）の固定描画 ---
-    // カメラを回転させても自分は常に同じ位置に表示
-    drawHuman(canvas.width / 2, canvas.height * 0.7, Math.PI/2, '#25f', player.walkCycle);
-    
-    // 照準（レティクル）
-    ctx.strokeStyle = 'lime';
-    ctx.strokeRect(canvas.width/2 - 10, canvas.height/2 - 10, 20, 20);
+    // プレイヤー（固定表示）
+    drawHuman(canvas.width / 2, canvas.height * 0.7, Math.PI/2, '#2a4a2a', player.walkCycle);
 
     requestAnimationFrame(draw);
 }
@@ -146,30 +178,13 @@ function drawHuman(x, y, angle, color, walk) {
     ctx.save();
     ctx.translate(x, y);
     ctx.rotate(angle);
-
-    let sway = Math.sin(walk) * 5; // 歩行時の揺れ
-
-    // 体・肩
+    let sway = Math.sin(walk) * 4;
     ctx.fillStyle = color;
-    ctx.beginPath();
-    ctx.ellipse(0, 0, 18, 25, 0, 0, Math.PI * 2);
-    ctx.fill();
-
-    // 腕（銃を構える）
-    ctx.fillStyle = color;
-    ctx.fillRect(10, -15 + sway, 20, 8);
-    ctx.fillRect(10, 7 - sway, 20, 8);
-
-    // 頭
-    ctx.fillStyle = '#ffdbac';
-    ctx.beginPath();
-    ctx.arc(5, 0, 10, 0, Math.PI * 2);
-    ctx.fill();
-
-    // 銃（ライフル）
-    ctx.fillStyle = '#111';
-    ctx.fillRect(20, -2, 25, 5);
-
+    ctx.beginPath(); ctx.ellipse(0, 0, 18, 22, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#c49c7a'; // 肌
+    ctx.beginPath(); ctx.arc(5, 0, 10, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#222'; // 銃
+    ctx.fillRect(15, -3 + sway, 30, 6);
     ctx.restore();
 }
 

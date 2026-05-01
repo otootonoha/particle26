@@ -2,43 +2,23 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>Survival Tactical - Full FPS</title>
+    <title>Tactical FPS - Wall Fix Edition</title>
     <style>
         body { margin: 0; overflow: hidden; background: #050805; font-family: 'Courier New', monospace; }
         canvas { display: block; }
-        
-        /* UIレイヤー */
-        #ui { 
-            position: absolute; top: 20px; left: 20px; 
-            color: #5f5; pointer-events: none; 
-            text-shadow: 2px 2px #000; z-index: 10;
-        }
-        #hp-bar { 
-            width: 250px; height: 15px; border: 2px solid #5f5; 
-            margin-top: 10px; background: #111; 
-        }
+        #ui { position: absolute; top: 20px; left: 20px; color: #5f5; pointer-events: none; text-shadow: 2px 2px #000; z-index: 10; }
+        #hp-bar { width: 250px; height: 15px; border: 2px solid #5f5; margin-top: 10px; background: #111; }
         #hp-inner { width: 100%; height: 100%; background: #f22; transition: 0.1s; }
-        
-        /* レティクル（照準） */
-        #crosshair { 
-            position: absolute; top: 50%; left: 50%; width: 30px; height: 30px; 
-            transform: translate(-50%, -50%); pointer-events: none;
-        }
-        #crosshair::before { 
-            content: ''; position: absolute; top: 50%; left: 0; width: 100%; height: 2px; 
-            background: rgba(0, 255, 0, 0.6); 
-        }
-        #crosshair::after { 
-            content: ''; position: absolute; left: 50%; top: 0; width: 2px; height: 100%; 
-            background: rgba(0, 255, 0, 0.6); 
-        }
+        #crosshair { position: absolute; top: 50%; left: 50%; width: 30px; height: 30px; transform: translate(-50%, -50%); pointer-events: none; }
+        #crosshair::before { content: ''; position: absolute; top: 50%; left: 0; width: 100%; height: 2px; background: rgba(0, 255, 0, 0.6); }
+        #crosshair::after { content: ''; position: absolute; left: 50%; top: 0; width: 2px; height: 100%; background: rgba(0, 255, 0, 0.6); }
     </style>
 </head>
 <body>
 
     <div id="ui">
-        <h2>SECTOR 7 - TACTICAL FPS</h2>
-        <p>CLICK TO ENGAGE | WASD TO MOVE</p>
+        <h2>SECTOR 7 - ANTI-CLIP MODE</h2>
+        <p>CLICK TO START | WASD TO MOVE</p>
         <div id="hp-bar"><div id="hp-inner"></div></div>
         <p id="score">KILLS: 0</p>
     </div>
@@ -46,13 +26,11 @@
     <canvas id="gameCanvas"></canvas>
 
 <script>
-/** @type {HTMLCanvasElement} */
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 const scoreEl = document.getElementById('score');
 const hpInner = document.getElementById('hp-inner');
 
-// 画面リサイズ対応
 function resize() {
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
@@ -60,105 +38,99 @@ function resize() {
 window.addEventListener('resize', resize);
 resize();
 
-// --- ゲーム定数 & 変数 ---
+// --- 設定 ---
 const SENSITIVITY = 0.002;
-const MAP_SIZE = 5000;
-const FOV = 0.8; 
+const MAP_SIZE = 4000;
+const FOV = 0.8;
 let score = 0;
 let playerHP = 100;
 let recoil = 0;
 let keys = {};
-let bullets = [];      // プレイヤーの弾
-let enemyBullets = []; // 敵の弾
+let bullets = [];
+let enemyBullets = [];
 let enemies = [];
 let obstacles = [];
 
-const player = {
-    x: 0,
-    y: 0,
-    angle: 0,
-    speed: 5.0
-};
+const player = { x: 0, y: 0, angle: 0, speed: 4.5, radius: 25 };
 
-// --- 初期化: 障害物の生成 ---
-for(let i=0; i<50; i++) {
+// --- 障害物の生成 (壁) ---
+for(let i=0; i<35; i++) {
     obstacles.push({
         x: (Math.random() - 0.5) * MAP_SIZE,
         y: (Math.random() - 0.5) * MAP_SIZE,
-        size: 60 + Math.random() * 120,
-        color: `hsl(130, 20%, ${10 + Math.random() * 15}%)`
+        w: 100 + Math.random() * 200,
+        h: 100 + Math.random() * 200,
+        color: `hsl(120, 15%, ${15 + Math.random() * 10}%)`
     });
 }
 
-// --- 入力制御 ---
-canvas.addEventListener('click', () => canvas.requestPointerLock());
-
-window.addEventListener('mousemove', e => {
-    if (document.pointerLockElement === canvas) {
-        player.angle += e.movementX * SENSITIVITY;
+// 汎用衝突判定 (矩形 vs 円/点)
+function checkCollision(x, y, r = 5) {
+    for (let o of obstacles) {
+        if (x + r > o.x && x - r < o.x + o.w && y + r > o.y && y - r < o.y + o.h) {
+            return true;
+        }
     }
-});
+    return false;
+}
 
+// 安全な場所を探す (敵のスポーン用)
+function getSafeLocation() {
+    let x, y, attempts = 0;
+    do {
+        let ang = Math.random() * Math.PI * 2;
+        let dist = 800 + Math.random() * 600;
+        x = player.x + Math.cos(ang) * dist;
+        y = player.y + Math.sin(ang) * dist;
+        attempts++;
+    } while (checkCollision(x, y, 30) && attempts < 10);
+    return { x, y };
+}
+
+// --- 入力 ---
+canvas.addEventListener('click', () => canvas.requestPointerLock());
+window.addEventListener('mousemove', e => {
+    if (document.pointerLockElement === canvas) player.angle += e.movementX * SENSITIVITY;
+});
 window.addEventListener('keydown', e => keys[e.code] = true);
 window.addEventListener('keyup', e => keys[e.code] = false);
-
 window.addEventListener('mousedown', () => {
     if (document.pointerLockElement === canvas && playerHP > 0) {
-        // 弾を生成
-        bullets.push({
-            x: player.x,
-            y: player.y,
-            angle: player.angle,
-            speed: 45,
-            dist: 0
-        });
-        recoil = 25; // 射撃時の反動（描画用）
+        bullets.push({ x: player.x, y: player.y, angle: player.angle, speed: 40, dist: 0 });
+        recoil = 20;
     }
 });
-
-// --- 計算ロジック ---
-function getRelative(tx, ty) {
-    // プレイヤーからの相対位置を計算
-    let dx = tx - player.x;
-    let dy = ty - player.y;
-    // プレイヤーの向きに合わせて回転
-    let rotX = dx * Math.cos(-player.angle) - dy * Math.sin(-player.angle);
-    let rotZ = dx * Math.sin(-player.angle) + dy * Math.cos(-player.angle);
-    return { x: rotX, z: rotZ };
-}
 
 function update() {
     if (playerHP <= 0) return;
 
-    // 移動処理
-    let dx = 0, dy = 0;
-    if (keys['KeyW']) { dx += Math.cos(player.angle); dy += Math.sin(player.angle); }
-    if (keys['KeyS']) { dx -= Math.cos(player.angle); dy -= Math.sin(player.angle); }
-    if (keys['KeyA']) { dx += Math.sin(player.angle); dy -= Math.cos(player.angle); }
-    if (keys['KeyD']) { dx -= Math.sin(player.angle); dy += Math.cos(player.angle); }
+    // プレイヤー移動 (壁判定あり)
+    let moveX = 0, moveY = 0;
+    if (keys['KeyW']) { moveX += Math.cos(player.angle); moveY += Math.sin(player.angle); }
+    if (keys['KeyS']) { moveX -= Math.cos(player.angle); moveY -= Math.sin(player.angle); }
+    if (keys['KeyA']) { moveX += Math.sin(player.angle); moveY -= Math.cos(player.angle); }
+    if (keys['KeyD']) { moveX -= Math.sin(player.angle); moveY += Math.cos(player.angle); }
     
-    player.x += dx * player.speed;
-    player.y += dy * player.speed;
+    let nextX = player.x + moveX * player.speed;
+    let nextY = player.y + moveY * player.speed;
     
-    // 反動の減衰
+    if (!checkCollision(nextX, player.y, player.radius)) player.x = nextX;
+    if (!checkCollision(player.x, nextY, player.radius)) player.y = nextY;
+    
     recoil *= 0.85;
 
-    // 自分の弾の更新
+    // プレイヤーの弾
     for (let i = bullets.length - 1; i >= 0; i--) {
         let b = bullets[i];
         b.x += Math.cos(b.angle) * b.speed;
         b.y += Math.sin(b.angle) * b.speed;
         b.dist += b.speed;
-
-        if (b.dist > 2500) {
+        if (b.dist > 2000 || checkCollision(b.x, b.y, 2)) {
             bullets.splice(i, 1);
             continue;
         }
-
-        // 敵との当たり判定
         for (let j = enemies.length - 1; j >= 0; j--) {
-            let e = enemies[j];
-            if (Math.hypot(e.x - b.x, e.y - b.y) < 50) {
+            if (Math.hypot(enemies[j].x - b.x, enemies[j].y - b.y) < 50) {
                 enemies.splice(j, 1);
                 bullets.splice(i, 1);
                 score++;
@@ -168,166 +140,117 @@ function update() {
         }
     }
 
-    // 敵の弾の更新
+    // 敵の弾
     for (let i = enemyBullets.length - 1; i >= 0; i--) {
         let eb = enemyBullets[i];
         eb.x += Math.cos(eb.angle) * eb.speed;
         eb.y += Math.sin(eb.angle) * eb.speed;
-        
-        let d = Math.hypot(player.x - eb.x, player.y - eb.y);
-        if (d < 35) {
+        if (checkCollision(eb.x, eb.y, 2)) {
+            enemyBullets.splice(i, 1);
+            continue;
+        }
+        if (Math.hypot(player.x - eb.x, player.y - eb.y) < 30) {
             playerHP -= 10;
             hpInner.style.width = Math.max(0, playerHP) + "%";
             enemyBullets.splice(i, 1);
-            if (playerHP <= 0) {
-                alert("MISSION FAILED. KILLS: " + score);
-                location.reload();
-            }
-        } else if (d > 2500) {
-            enemyBullets.splice(i, 1);
+            if (playerHP <= 0) { alert("DEAD. SCORE: " + score); location.reload(); }
         }
     }
 
-    // 敵の生成（最大15体まで）
-    if (enemies.length < 15 && Math.random() < 0.04) {
-        let spawnAngle = Math.random() * Math.PI * 2;
-        let spawnDist = 1000 + Math.random() * 500;
-        enemies.push({
-            x: player.x + Math.cos(spawnAngle) * spawnDist,
-            y: player.y + Math.sin(spawnAngle) * spawnDist,
-            lastShot: Date.now() + Math.random() * 1000
-        });
+    // 敵スポーン
+    if (enemies.length < 12 && Math.random() < 0.03) {
+        let pos = getSafeLocation();
+        enemies.push({ x: pos.x, y: pos.y, lastShot: Date.now() + Math.random()*1000 });
     }
 
-    // 敵の挙動
+    // 敵AI (壁を避ける)
     enemies.forEach(e => {
         let d = Math.hypot(player.x - e.x, player.y - e.y);
-        let angToPlayer = Math.atan2(player.y - e.y, player.x - e.x);
-        
-        if (d > 450) {
-            // プレイヤーに歩み寄る
-            e.x += Math.cos(angToPlayer) * 3;
-            e.y += Math.sin(angToPlayer) * 3;
-        } else if (Date.now() - e.lastShot > 1800) {
-            // 射撃
-            enemyBullets.push({
-                x: e.x, y: e.y,
-                angle: angToPlayer + (Math.random()-0.5)*0.05,
-                speed: 14
-            });
+        let ang = Math.atan2(player.y - e.y, player.x - e.x);
+        if (d > 400) {
+            let vx = Math.cos(ang) * 2.5;
+            let vy = Math.sin(ang) * 2.5;
+            if (!checkCollision(e.x + vx, e.y + vy, 30)) {
+                e.x += vx; e.y += vy;
+            }
+        } else if (Date.now() - e.lastShot > 2000) {
+            enemyBullets.push({ x: e.x, y: e.y, angle: ang, speed: 12 });
             e.lastShot = Date.now();
         }
     });
 }
 
-// --- 描画ロジック ---
+function getRelative(tx, ty) {
+    let dx = tx - player.x, dy = ty - player.y;
+    let rotX = dx * Math.cos(-player.angle) - dy * Math.sin(-player.angle);
+    let rotZ = dx * Math.sin(-player.angle) + dy * Math.cos(-player.angle);
+    return { x: rotX, z: rotZ };
+}
+
 function draw() {
     update();
-
-    // 画面クリア
-    ctx.fillStyle = '#050a05'; ctx.fillRect(0, 0, canvas.width, canvas.height/2); // 空
-    ctx.fillStyle = '#0a100a'; ctx.fillRect(0, canvas.height/2, canvas.width, canvas.height/2); // 地面
+    ctx.fillStyle = '#050a05'; ctx.fillRect(0, 0, canvas.width, canvas.height/2);
+    ctx.fillStyle = '#0a100a'; ctx.fillRect(0, canvas.height/2, canvas.width, canvas.height/2);
 
     let drawList = [];
-
-    // すべてのエンティティを「プレイヤーから見た相対座標」に変換してリスト化
     obstacles.forEach(o => {
-        let rel = getRelative(o.x, o.y);
-        if (rel.z > 20) drawList.push({ type: 'box', ...rel, size: o.size, color: o.color });
+        // 矩形の4隅ではなく、中心位置で簡易3D化
+        let rel = getRelative(o.x + o.w/2, o.y + o.h/2);
+        if (rel.z > 50) drawList.push({ type: 'box', ...rel, w: o.w, h: o.h, color: o.color });
     });
-
     enemies.forEach(e => {
         let rel = getRelative(e.x, e.y);
         if (rel.z > 20) drawList.push({ type: 'enemy', ...rel });
     });
-
     bullets.forEach(b => {
         let rel = getRelative(b.x, b.y);
         if (rel.z > 10) drawList.push({ type: 'bullet', ...rel });
     });
-
     enemyBullets.forEach(eb => {
         let rel = getRelative(eb.x, eb.y);
         if (rel.z > 10) drawList.push({ type: 'ebullet', ...rel });
     });
 
-    // 遠いものから順に並び替え（Zソート）
     drawList.sort((a, b) => b.z - a.z);
 
-    // 描画実行
     drawList.forEach(obj => {
-        // スクリーン座標への変換（パースペクティブ投影）
         let screenX = (obj.x / obj.z) * (canvas.width / FOV) + canvas.width / 2;
         let scale = 1000 / obj.z;
 
         if (obj.type === 'box') {
-            let w = obj.size * scale;
-            let h = 600 * scale;
+            let w = obj.w * scale;
+            let h = 800 * scale;
             ctx.fillStyle = obj.color;
             ctx.fillRect(screenX - w/2, canvas.height/2 - h, w, h);
-            ctx.strokeStyle = '#2f2';
-            ctx.lineWidth = 1;
-            ctx.strokeRect(screenX - w/2, canvas.height/2 - h, w, h);
-        } 
-        else if (obj.type === 'enemy') {
-            let h = 160 * scale;
-            let w = 80 * scale;
-            ctx.fillStyle = '#a33'; // 敵の体
-            ctx.fillRect(screenX - w/2, canvas.height/2 - h, w, h);
-            ctx.fillStyle = '#f00'; // 敵のバイザー
-            ctx.fillRect(screenX - w/3, canvas.height/2 - h*0.85, w/1.5, h/8);
-        } 
-        else if (obj.type === 'bullet') {
-            let s = 10 * scale;
-            ctx.fillStyle = '#ff0';
-            ctx.beginPath();
-            ctx.arc(screenX, canvas.height/2 - 20*scale, s, 0, Math.PI*2);
-            ctx.fill();
-        } 
-        else if (obj.type === 'ebullet') {
-            let s = 15 * scale;
-            ctx.fillStyle = '#f00';
-            ctx.shadowBlur = 15;
-            ctx.shadowColor = 'red';
-            ctx.beginPath();
-            ctx.arc(screenX, canvas.height/2 - 20*scale, s, 0, Math.PI*2);
-            ctx.fill();
-            ctx.shadowBlur = 0;
+            ctx.strokeStyle = '#2f2'; ctx.strokeRect(screenX - w/2, canvas.height/2 - h, w, h);
+        } else if (obj.type === 'enemy') {
+            let h = 160 * scale, w = 80 * scale;
+            ctx.fillStyle = '#a33'; ctx.fillRect(screenX - w/2, canvas.height/2 - h, w, h);
+            ctx.fillStyle = '#f00'; ctx.fillRect(screenX - w/3, canvas.height/2 - h*0.85, w/1.5, h/8);
+        } else if (obj.type === 'bullet' || obj.type === 'ebullet') {
+            let s = (obj.type === 'bullet' ? 8 : 15) * scale;
+            ctx.fillStyle = (obj.type === 'bullet' ? '#ff0' : '#f00');
+            ctx.beginPath(); ctx.arc(screenX, canvas.height/2 - 20*scale, s, 0, Math.PI*2); ctx.fill();
         }
     });
 
-    // --- 自分の手元（銃）の描画 ---
     drawWeapon();
-
     requestAnimationFrame(draw);
 }
 
 function drawWeapon() {
     ctx.save();
-    let gunX = canvas.width * 0.75;
-    let gunY = canvas.height - 250 + recoil; // 反動で上下に揺れる
-    
-    // 銃身
-    ctx.fillStyle = '#1a1a1a';
-    ctx.fillRect(gunX - 50, gunY, 100, 400);
-    
-    // スコープ/上部
-    ctx.fillStyle = '#111';
-    ctx.fillRect(gunX - 40, gunY - 30, 80, 70);
-    
-    // マズルフラッシュ
+    let gunX = canvas.width * 0.75, gunY = canvas.height - 250 + recoil;
+    ctx.fillStyle = '#1a1a1a'; ctx.fillRect(gunX - 50, gunY, 100, 400);
+    ctx.fillStyle = '#111'; ctx.fillRect(gunX - 40, gunY - 30, 80, 70);
     if (recoil > 15) {
         ctx.fillStyle = 'rgba(255, 255, 200, 0.8)';
-        ctx.beginPath();
-        ctx.arc(gunX, gunY - 50, 50, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.beginPath(); ctx.arc(gunX, gunY - 50, 50, 0, Math.PI * 2); ctx.fill();
     }
     ctx.restore();
 }
 
-// ゲーム開始
 draw();
-
 </script>
 </body>
 </html>
